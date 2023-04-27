@@ -1,0 +1,66 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Native 'afb-sockbmc'",
+            "type": "lldb",
+            "preLaunchTask": "sockbmc-native-compile",
+            "request": "launch",
+            "program": "afb-binder",
+            "env": {
+                "LD_LIBRARY_PATH": "/usr/local/lib64"
+            },
+            "args": [
+                "-vvv",
+                "--trap-faults=0",
+                "--config=examples/demo/etc/binding-config.json",
+            ],
+            "cwd": "${workspaceFolder}",
+            "initCommands": [
+                "target stop-hook add -n _start -o continue",
+                "settings set target.disable-aslr false"
+            ]
+        },
+        {
+            "name": "Native 'afb-model3'",
+            "type": "lldb",
+            "preLaunchTask": "sockbmc-native-compile",
+            "request": "launch",
+            "program": "afb-binder",
+            "env": {
+                "LD_LIBRARY_PATH": "/usr/local/lib64"
+            },
+            "args": [
+                "-vvv",
+                "--trap-faults=0",
+                "--config=examples/model3/etc/binding-config.json",
+            ],
+            "cwd": "${workspaceFolder}",
+            "initCommands": [
+                "target stop-hook add -n _start -o continue",
+                "settings set target.disable-aslr false"
+            ]
+        },
+        {
+            "name": "Native 'tap-test-auto'",
+            "type": "lldb",
+            "preLaunchTask": "test-native-compile",
+            "request": "launch",
+            "program": "afb-binder",
+            "env": {
+                "LD_LIBRARY_PATH": "/usr/local/lib64"
+            },
+            "args": [
+                "-vvv",
+                "--trap-faults=1",
+                "--config=examples/test/etc/binding-test-tap.json",
+            ],
+            "cwd": "${workspaceFolder}",
+            "initCommands": [
+                "target stop-hook add -n _start -o continue",
+                "settings set target.disable-aslr false",
+                "process handle -p true -s false -n true SIGVTALRM"
+            ]
+        },
+    ]
+}

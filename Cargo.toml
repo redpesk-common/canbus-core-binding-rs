@@ -1,0 +1,8 @@
+[workspace]
+
+members = [
+    "sockcan-data",
+    "sockcan-binding",
+    "dbcapi-lib",
+    "examples/model3",
+]

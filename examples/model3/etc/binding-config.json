@@ -1,0 +1,25 @@
+{
+  "name": "afb-canbus",
+  "no-ldpaths": true,
+  "port": 1234,
+  "alias": ["/devtools:/usr/share/afb-ui-devtools/binder"],
+  "monitoring": true,
+
+  "binding": [
+    {
+        "uid": "sockbmc",
+        "path": "-$HOME/.cargo/build/debug/libafb_sockcan.so",
+        "info": "RUST sockbmc/can APIs",
+        "sock_api": "sockcan",
+        "sock_evt": "sockbmc"
+    },
+    {
+        "uid": "model3",
+        "path": "$HOME/.cargo/build/debug/libafb_model3.so",
+        "info": "RUST model3/DBC API",
+        "dbc_api": "model3",
+        "sock_api": "sockcan",
+        "sock_evt": "sockbmc"
+    }
+  ]
+}

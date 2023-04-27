@@ -1,0 +1,17 @@
+[package]
+name = "lib_dbcapi"
+authors = ["fulup@iot.bzh"]
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1"}
+lib_sockdata = {path="../sockcan-data"}
+lib_sockcan= {path= "../../canbus-rs/sockcan"}
+lib_libafb= {path= "../../afb-librust/libafb"}
+
+[lib]
+name = "dbcapi"
+crate-type = ["lib"]
+path = "src/dbcapi-lib.rs"
