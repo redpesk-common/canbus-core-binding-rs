@@ -40,9 +40,12 @@ struct CanEvtCtx {
     client: Arc<AfbClientData>,
 }
 
-AfbSessionRegister!(SessionCtx);
+AfbSessionRegister!(SessionCtx, session_closing);
 struct SessionCtx {
     client: Arc<AfbClientData>,
+}
+
+fn session_closing(_session: &mut SessionCtx) {
 }
 
 // this routine is called when a sockfd got data
@@ -287,7 +290,7 @@ fn close_cb(request: &AfbRequest, _args: &AfbData) -> Result<(), AfbError> {
     );
     session.client.event.unref();
     session.client.sockfd.close();
-    let _ = SessionCtx::drop(request);
+    let _ = SessionCtx::unref(request);
     Ok(())
 }
 

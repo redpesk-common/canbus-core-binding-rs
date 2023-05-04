@@ -5,4 +5,5 @@ members = [
     "sockcan-binding",
     "dbcapi-lib",
     "examples/model3",
+    "examples/bms",
 ]

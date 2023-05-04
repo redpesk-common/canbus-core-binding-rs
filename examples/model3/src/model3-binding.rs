@@ -31,7 +31,7 @@ extern crate sockcan;
 extern crate dbcapi;
 
 // include generated dbc message pool
-include!("dbcgen-model3.rs");
+include!("./__model3-dbcgen.rs");
 use crate::DbcModel3::*;
 
 use libafb::prelude::*;

@@ -1,0 +1,25 @@
+[package]
+name = "can-bms"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1", features = ["derive"], optional = true  }
+serde_json = {version= "1", optional = true }
+bitvec = { version = "1.0", default-features = false }
+bitflags = { version = "2"}
+lib_sockdata= {path ="../../sockcan-data"}
+lib_dbcapi= {path ="../../dbcapi-lib"}
+lib_sockcan= {path= "../../../canbus-rs/sockcan"}
+lib_libafb= {path= "../../../afb-librust/libafb"}
+
+[build-dependencies]
+lib_dbcparser= {path= "../../../canbus-rs/dbcparser"}
+
+[lib]
+name = "afb_bms"
+crate-type = ["cdylib"]
+path = "src/bms-binding.rs"
+
+[features]
+default = ["serde","serde_json"]

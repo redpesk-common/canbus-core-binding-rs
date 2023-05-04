@@ -16,10 +16,10 @@ fn main() {
 
     // !!! WARNING: model3can.dbc generate 33000 lines of code !!!
     //let dbc_infile="../dbc-log/simple.dbc";
-    let dbc_infile = "./dbc-log/model3can.dbc";
+    let dbc_infile = "./etc/dbc/model3can.dbc";
 
     // generate parser outside of project git repo
-    let dbc_outfile = "./src/dbcgen-model3.rs";
+    let dbc_outfile = "./src/__model3-dbcgen.rs";
 
     // invalidate build when dbc file changes
     println!("cargo:rerun-if-changed={}", dbc_infile);
