@@ -21,14 +21,14 @@
  * $RP_END_LICENSE$
  */
 
-
 #![doc(
     html_logo_url = "https://iot.bzh/images/defaults/company/512-479-max-transp.png",
     html_favicon_url = "https://iot.bzh/images/defaults/favicon.ico"
 )]
 
+#[cfg(not(afbv4))]
+extern crate afbv4;
 extern crate serde;
-extern crate libafb;
 extern crate sockcan;
 extern crate sockdata;
 
@@ -37,5 +37,3 @@ mod verbs;
 
 #[path = "./sockcan-binding.rs"]
 mod binding;
-
-

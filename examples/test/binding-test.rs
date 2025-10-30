@@ -10,8 +10,9 @@
     html_logo_url = "https://iot.bzh/images/defaults/company/512-479-max-transp.png",
     html_favicon_url = "https://iot.bzh/images/defaults/favicon.ico"
 )]
+#[cfg(not(afbv4))]
+extern crate afbv4;
 extern crate jsonc;
-extern crate libafb;
 
 // import libafb dependencies
 libafb::AfbModImport!();
@@ -46,7 +47,6 @@ impl AfbApiControls for TapUserData {
                 "{'input':'examples/etc/model3can.dbc', 'output':'none'}",
             ))
             .expect("valid json");
-
 
         let test_suite = AfbTapSuite::new(api, "sockbmc Apis Test")
             .set_info("Rust low can Api TAP test")
@@ -117,7 +117,6 @@ pub fn binding_test_init(rootv4: AfbApiV4, jconf: JsoncObj) -> i32 {
         autoexit: true,
         output: AfbTapOutput::TAP,
     };
-
 
     afb_log_msg!(Notice, rootv4, "-- rootv4 {} loaded", uid);
     match AfbApi::new("sockbmc-test")

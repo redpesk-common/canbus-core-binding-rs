@@ -22,7 +22,7 @@
  */
 
 use crate::*;
-use libafb::prelude::*;
+use afbv4::prelude::*;
 use sockdata::prelude::*;
 
 pub struct ApiUserData {
@@ -33,7 +33,7 @@ pub struct ApiUserData {
 }
 
 impl AfbApiControls for ApiUserData {
-    fn config(&mut self, api: &AfbApi, jconf: JsoncObj) -> Result<(),AfbError> {
+    fn config(&mut self, api: &AfbApi, jconf: JsoncObj) -> Result<(), AfbError> {
         afb_log_msg!(Debug, api, "api={} config={}", api.get_uid(), jconf);
 
         Ok(())
@@ -48,7 +48,7 @@ impl AfbApiControls for ApiUserData {
 // Binding init callback started at binding load time before any API exist
 // -----------------------------------------
 pub fn binding_init(rootv4: AfbApiV4, jconf: JsoncObj) -> Result<&'static AfbApi, AfbError> {
-    afb_log_msg!(Info,rootv4, "config:{}",jconf);
+    afb_log_msg!(Info, rootv4, "config:{}", jconf);
 
     let candev = if let Ok(value) = jconf.get::<String>("dev") {
         to_static_str(value)
@@ -94,18 +94,21 @@ pub fn binding_init(rootv4: AfbApiV4, jconf: JsoncObj) -> Result<&'static AfbApi
     };
 
     // register data converter
-    sockdata_register(rootv4)?;
+    sockdata_register(rootv4).expect("sockdata_register failed");
 
     // create a new api
-    let canapi = AfbApi::new(canapi)
+    let canapi = AfbApi::new(canuid)
         .set_info(info)
         .set_permission(AfbPermission::new(to_static_str(acls.to_owned())))
         .seal(false);
 
+    // open dbc can message pool and create one verb per message/signal
+    //let pool = Box::new(CanMsgPool::new(canuid));
     // register verbs and events
-    verbs::register(canapi, &config)?;
+    verbs::register(canapi, &config).expect("verbs register failed");
+    //create_pool_verbs(&mut canapi, jconf, pool).expect("create_pool_verbs failed");
+    //canapi.finalize().expect("api finalize failed")
 
-    // finalize api
     Ok(canapi.finalize()?)
 }
 

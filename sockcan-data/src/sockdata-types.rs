@@ -21,11 +21,10 @@
  * $RP_END_LICENSE$
  */
 
-
 // import libafb dependencies
-use libafb::prelude::*;
-use sockcan::prelude::*;
+use afbv4::prelude::*;
 use serde::{Deserialize, Serialize};
+use sockcan::prelude::*;
 
 // automatically generate json encoder/decoder for MySimpleData
 AfbDataConverter!(bmc_error, CanBmcError);
@@ -151,9 +150,7 @@ pub struct UnSubscribeParam {
 }
 impl UnSubscribeParam {
     pub fn new(canids: Vec<u32>) -> Self {
-        UnSubscribeParam {
-            canids: canids,
-        }
+        UnSubscribeParam { canids: canids }
     }
     pub fn get_canids(&self) -> &Vec<u32> {
         &self.canids

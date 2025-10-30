@@ -21,14 +21,15 @@
  * $RP_END_LICENSE$
  */
 
-
 #![doc(
     html_logo_url = "https://iot.bzh/images/defaults/company/512-479-max-transp.png",
     html_favicon_url = "https://iot.bzh/images/defaults/favicon.ico"
 )]
 
+#[cfg(not(afbv4))]
+extern crate afbv4;
+
 extern crate serde;
-extern crate libafb;
 extern crate sockcan;
 
 #[path = "./sockdata-utils.rs"]
@@ -38,6 +39,6 @@ mod utils;
 mod types;
 
 pub mod prelude {
-    pub use crate::utils::*;
     pub use crate::types::*;
+    pub use crate::utils::*;
 }

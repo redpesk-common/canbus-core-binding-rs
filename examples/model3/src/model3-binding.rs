@@ -26,17 +26,18 @@
     html_favicon_url = "https://iot.bzh/images/defaults/favicon.ico"
 )]
 
-extern crate libafb;
-extern crate sockcan;
+#[cfg(not(afbv4))]
+extern crate afbv4;
 extern crate dbcapi;
+extern crate sockcan;
 
 // include generated dbc message pool
 include!("./__model3-dbcgen.rs");
 use crate::DbcModel3::*;
 
-use libafb::prelude::*;
-use sockdata::prelude::*;
 use crate::dbcapi::*;
+use afbv4::prelude::*;
+use sockdata::prelude::*;
 
 pub struct ApiUserData {
     pub uid: &'static str,
@@ -45,7 +46,7 @@ pub struct ApiUserData {
 }
 
 impl AfbApiControls for ApiUserData {
-    fn config(&mut self, api: &AfbApi, jconf: JsoncObj) -> Result<(),AfbError> {
+    fn config(&mut self, api: &AfbApi, jconf: JsoncObj) -> Result<(), AfbError> {
         afb_log_msg!(Debug, api, "api={} config={}", api.get_uid(), jconf);
         Ok(())
     }
@@ -59,7 +60,7 @@ impl AfbApiControls for ApiUserData {
 // Binding init callback started at binding load time before any API exist
 // -----------------------------------------
 pub fn binding_init(rootv4: AfbApiV4, jconf: JsoncObj) -> Result<&'static AfbApi, AfbError> {
-    afb_log_msg!(Info,rootv4, "config:{}",jconf);
+    afb_log_msg!(Info, rootv4, "config:{}", jconf);
     let candev = if let Ok(value) = jconf.get::<String>("dev") {
         to_static_str(value)
     } else {
@@ -103,21 +104,16 @@ pub fn binding_init(rootv4: AfbApiV4, jconf: JsoncObj) -> Result<&'static AfbApi
     };
 
     // create a new api
-    let can_api = AfbApi::new(dbc_uid)
-        .set_name(dbc_api)
+    let mut can_api = AfbApi::new(dbc_uid)
         .set_info(info)
-        .set_permission(AfbPermission::new(acls))
-        .set_callback(Box::new(api_usrdata))
-        .require_api(bmc_api)
-        .seal(false)
-        .finalize() ?;
+        .set_permission(AfbPermission::new(to_static_str(acls.to_owned())))
+        .seal(false);
 
     // open dbc can message pool and create one verb per message/signal
     let pool = Box::new(CanMsgPool::new(dbc_uid));
-    create_pool_verbs(can_api, jconf, pool) ?;
+    create_pool_verbs(&mut can_api, jconf, pool).expect("create_pool_verbs failed");
 
-    // finalize api
-    Ok(can_api)
+    Ok(can_api.finalize()?)
 }
 
 // register binding within libafb

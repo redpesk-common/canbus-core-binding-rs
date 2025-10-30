@@ -22,13 +22,13 @@
  */
 
 // import libafb dependencies
-use libafb::prelude::*;
+use afbv4::prelude::*;
 use sockcan::prelude::*;
 
 pub fn sock2afb(error: CanError) -> AfbError {
-    AfbError::new(error.get_uid().as_str(), error.get_info().as_str())
+    AfbError::new(error.get_uid().as_str(), 0, error.get_info().as_str())
 }
 
-pub fn to_static_str(value: String) -> &'static str {
-    Box::leak(value.into_boxed_str())
-}
+//pub fn to_static_str(value: String) -> &'static str {
+//    Box::leak(value.into_boxed_str())
+//}

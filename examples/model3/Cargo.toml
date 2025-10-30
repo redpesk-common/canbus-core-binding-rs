@@ -11,7 +11,7 @@ bitflags = { version = "2"}
 lib_sockdata= {path ="../../sockcan-data"}
 lib_dbcapi= {path ="../../dbcapi-lib"}
 lib_sockcan= {path= "../../../canbus-rs/sockcan"}
-lib_libafb= {path= "../../../afb-librust/libafb"}
+afbv4= {path= "../../../afb-librust/afb-librs"}
 
 [build-dependencies]
 lib_dbcparser= {path= "../../../canbus-rs/dbcparser"}

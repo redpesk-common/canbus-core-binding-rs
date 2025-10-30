@@ -26,7 +26,8 @@
     html_favicon_url = "https://iot.bzh/images/defaults/favicon.ico"
 )]
 
-extern crate libafb;
+#[cfg(not(afbv4))]
+extern crate afbv4;
 extern crate sockcan;
 extern crate sockdata;
 
@@ -34,7 +35,7 @@ const MSG_DFT_RATE: u64 = 500;
 const MSG_DFT_WATCHDOG: u64 = 10000;
 
 // import libafb dependencies
-use libafb::prelude::*;
+use afbv4::prelude::*;
 use sockcan::prelude::*;
 use sockdata::prelude::*;
 use std::cell::RefCell;
@@ -108,7 +109,6 @@ impl CanSigCtrl for SigPoolCtx {
     }
 }
 
-AfbVerbRegister!(SignalHandle, signal_vcb, SigVerbCtx);
 struct SigVerbCtx {
     sig_rfc: Rc<RefCell<Box<dyn CanDbcSignal>>>,
     msg_rfc: Rc<RefCell<Box<dyn CanDbcMessage>>>,
@@ -116,7 +116,8 @@ struct SigVerbCtx {
     data: Rc<SigDataCtx>,
 }
 
-fn signal_vcb(request: &AfbRequest, args: &AfbData, ctx: &mut SigVerbCtx) -> Result<(), AfbError> {
+fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Result<(), AfbError> {
+    let ctx = ctx.get_ref::<SigVerbCtx>()?;
     let jquery = args.get::<JsoncObj>(0)?;
     let jaction = jquery.get::<String>("action")?;
     let action = match jaction.to_uppercase().as_str() {
@@ -125,7 +126,11 @@ fn signal_vcb(request: &AfbRequest, args: &AfbData, ctx: &mut SigVerbCtx) -> Res
         "READ" => Action::READ,
         "RESET" => Action::RESET,
         _ => {
-            let error = AfbError::new("invalid-action", "expect: SUBSCRIBE|UNSUBSCRIBE|READ|RESET");
+            let error = AfbError::new(
+                "invalid-action",
+                0,
+                "expect: SUBSCRIBE|UNSUBSCRIBE|READ|RESET",
+            );
             return Err(error);
         }
     };
@@ -136,6 +141,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbData, ctx: &mut SigVerbCtx) -> Res
         Err(_) => {
             let error = AfbError::new(
                 "fail-borrow-sig",
+                0,
                 "Internal pool error (sig rfc cell already used)",
             );
             return Err(afb_add_trace!(error));
@@ -147,6 +153,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbData, ctx: &mut SigVerbCtx) -> Res
         Err(_) => {
             let error = AfbError::new(
                 "fail-borrow-msg",
+                0,
                 "Internal pool error (msg rfc cell already used)",
             );
             return Err(afb_add_trace!(error));
@@ -158,6 +165,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbData, ctx: &mut SigVerbCtx) -> Res
         Err(_) => {
             let error = AfbError::new(
                 "fail-borrow-info",
+                0,
                 "Internal pool error (msg info cell already used)",
             );
             return Err(afb_add_trace!(error));
@@ -169,6 +177,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbData, ctx: &mut SigVerbCtx) -> Res
         Err(_) => {
             let error = AfbError::new(
                 "fail-borrow-info",
+                0,
                 "Internal pool error (sig info cell already used)",
             );
             return Err(afb_add_trace!(error));
@@ -271,11 +280,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbData, ctx: &mut SigVerbCtx) -> Res
         Action::RESET => {
             sig.reset();
             request.reply(
-                format!(
-                    "Reset (canid:{}) sig:{} OK",
-                    msg.get_id(),
-                    sig.get_name(),
-                ),
+                format!("Reset (canid:{}) sig:{} OK", msg.get_id(), sig.get_name(),),
                 0,
             );
         }
@@ -291,7 +296,7 @@ fn register_signal(
     sig_rfc: &Rc<RefCell<Box<dyn CanDbcSignal>>>,
 ) -> Result<(&'static AfbVerb, &'static AfbEvent), AfbError> {
     let mut sig_ref = match sig_rfc.try_borrow_mut() {
-        Err(_) => return Err(AfbError::new("register-sig-fail", "internal pool error")),
+        Err(_) => return Err(AfbError::new("register-sig-fail", 0, "internal pool error")),
         Ok(sig) => sig,
     };
 
@@ -314,14 +319,14 @@ fn register_signal(
     }));
 
     let sig_verb = AfbVerb::new(sig_ref.get_name())
-        .set_action("['reset','read','subscribe','unsubscribe']")?
-        .set_sample("{'action':'subscribe','rate':250,'watchdog':5000,'flag':'all'}")?
-        .set_callback(Box::new(SigVerbCtx {
+        .set_actions("['reset','read','subscribe','unsubscribe']")?
+        .set_callback(signal_vcb)
+        .set_context(SigVerbCtx {
             data: sigdata.clone(),
             sig_rfc: sig_rfc.clone(),
             msg_rfc: msg_rfc.clone(),
             msg_ctx: msg_ctx.clone(),
-        }))
+        })
         .finalize()?;
 
     Ok((sig_verb, sig_event))
@@ -373,6 +378,7 @@ impl CanMsgCtrl for MessagePoolCtx {
                     Err(_) => {
                         let error = AfbError::new(
                             "fail-borrow-sig",
+                            0,
                             "Internal pool error (sig rfc cell already used)",
                         );
                         return Err(error);
@@ -445,8 +451,8 @@ impl CanMsgCtrl for MessagePoolCtx {
     }
 }
 
-AfbVerbRegister!(MessageHandle, message_vcb, MessageVerbCtx);
-fn message_vcb(request: &AfbRequest, args: &AfbData, ctx: &MessageVerbCtx) -> Result<(), AfbError> {
+fn message_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Result<(), AfbError> {
+    let ctx = ctx.get_ref::<MessageVerbCtx>()?;
     let jquery = args.get::<JsoncObj>(0)?;
     let jaction = jquery.get::<String>("action")?;
     let action = match jaction.to_uppercase().as_str() {
@@ -455,7 +461,11 @@ fn message_vcb(request: &AfbRequest, args: &AfbData, ctx: &MessageVerbCtx) -> Re
         "READ" => Action::READ,
         "RESET" => Action::RESET,
         _ => {
-            let error = AfbError::new("invalid-action", "expect: SUBSCRIBE|UNSUBSCRIBE|READ|RESET");
+            let error = AfbError::new(
+                "invalid-action",
+                0,
+                "expect: SUBSCRIBE|UNSUBSCRIBE|READ|RESET",
+            );
             return Err(error);
         }
     };
@@ -466,6 +476,7 @@ fn message_vcb(request: &AfbRequest, args: &AfbData, ctx: &MessageVerbCtx) -> Re
         Err(_) => {
             let error = AfbError::new(
                 "fail-borrow-msg",
+                0,
                 "Internal pool error (msg cell already used)",
             );
             return Err(afb_add_trace!(error));
@@ -477,6 +488,7 @@ fn message_vcb(request: &AfbRequest, args: &AfbData, ctx: &MessageVerbCtx) -> Re
         Err(_) => {
             let error = AfbError::new(
                 "fail-borrow-info",
+                0,
                 "Internal pool error (info cell already used)",
             );
             return Err(afb_add_trace!(error));
@@ -570,16 +582,13 @@ fn message_vcb(request: &AfbRequest, args: &AfbData, ctx: &MessageVerbCtx) -> Re
             Err(_) => {
                 return Err(AfbError::new(
                     "reset-msg-fail",
+                    0,
                     "internal pool (fail to get borrow mut)",
                 ))
             }
             Ok(()) => {
                 request.reply(
-                    format!(
-                    "Reset (canid:{}) msg:{} OK",
-                    msg.get_id(),
-                    msg.get_name(),
-                    ),
+                    format!("Reset (canid:{}) msg:{} OK", msg.get_id(), msg.get_name(),),
                     0,
                 );
             }
@@ -605,6 +614,7 @@ fn register_msg(
         Err(_) => {
             return Err(AfbError::new(
                 "register-msg-fail",
+                0,
                 "internal pool (fail to get borrow mut)",
             ))
         }
@@ -662,12 +672,12 @@ fn register_msg(
     }));
 
     msg_verb
-        .set_action("['reset','read','subscribe','unsubscribe']")?
-        .set_sample("{'action':'subscribe','rate':250,'watchdog':5000,'flag':'new'}")?
-        .set_callback(Box::new(MessageVerbCtx {
+        .set_actions("['reset','read','subscribe','unsubscribe']")?
+        .set_callback(message_vcb)
+        .set_context(MessageVerbCtx {
             msg_rfc: msg_rfc.clone(),
             data: vcbdata.clone(),
-        }))
+        })
         .register(api.get_apiv4(), msg_acls);
     api.add_verb(msg_verb.finalize()?);
 
@@ -691,17 +701,19 @@ fn register_msg(
 struct EvtUserData {
     pool: &'static mut dyn CanDbcPool,
 }
-AfbEventRegister!(EventGetCtrl, bmc_event_cb, EvtUserData);
-fn bmc_event_cb(event: &AfbEventMsg, args: &AfbData, ctx: &mut EvtUserData) {
+
+fn bmc_event_cb(event: &AfbEventMsg, args: &AfbRqtData, ctx: &AfbCtxData) -> Result<(), AfbError> {
+    let ctx: &EvtUserData = ctx.get_ref::<EvtUserData>()?;
     // get event data directly as SockBcmMsg
     let bmc_frame = match args.get::<&CanBmcData>(0) {
         Err(_) => {
             let error = AfbError::new(
                 "event-bmc-invalid",
+                0,
                 "Internal error event not not SockBmcMsg type",
             );
             afb_log_msg!(Critical, event, &error);
-            return;
+            return Ok(());
         }
         Ok(value) => value,
     };
@@ -717,28 +729,30 @@ fn bmc_event_cb(event: &AfbEventMsg, args: &AfbData, ctx: &mut EvtUserData) {
         Err(_) => {
             let error = AfbError::new(
                 "event-pool-update",
+                0,
                 format!("Fail to update message pool canid:{}", bmc_frame.get_id()),
             );
             afb_log_msg!(Critical, event, &error);
-            return;
+            return Ok(());
         }
         Ok(_msg) => {}
     };
+    Ok(())
 }
 
 pub fn create_pool_verbs(
-    api: &AfbApi,
+    api: &mut AfbApi,
     jconf: JsoncObj,
     pool_box: Box<dyn CanDbcPool>,
 ) -> Result<(), AfbError> {
     // register data converter
-    sockdata_register(api.get_apiv4())?;
+    sockdata_register(api.get_apiv4()).expect("sockdata_register failed");
 
     // open check sockbmc binding is alive
     let uid = to_static_str(jconf.get::<String>("uid")?);
     let bmc = to_static_str(jconf.get::<String>("sock_api")?);
     let evt = to_static_str(jconf.get::<String>("sock_evt")?);
-    AfbSubCall::call_sync(api, bmc, "check_sock", 0)?;
+    AfbSubCall::call_sync(&*api, bmc, "check_sock", 0)?;
 
     // lock sockcan message pool in memory
     let pool = Box::leak(pool_box);
@@ -761,12 +775,12 @@ pub fn create_pool_verbs(
     let evt_handler = AfbEvtHandler::new(uid)
         .set_info("Receive low level BMC data frame")
         .set_pattern(pattern)
-        .set_callback(Box::new(EventGetCtrl { pool: pool }));
+        .set_callback(bmc_event_cb)
+        .set_context(EvtUserData { pool: pool });
     evt_handler.register(api.get_apiv4());
     evt_handler.finalize()?;
 
     // force api update
-    let api = unsafe { &mut *(api as *const _ as *mut AfbApi) };
     api.add_evt_handler(evt_handler);
 
     Ok(())
