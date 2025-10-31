@@ -75,7 +75,7 @@ fn async_can_cb(_evtfd: &AfbEvtFd, revent: u32, ctx: &AfbCtxData) -> Result<(), 
 
         if let CanBcmOpCode::RxTimeout = opcode {
             if let Ok(canid) = msgid {
-                match SockBcmCmd::new(
+                if let Err(_error) = SockBcmCmd::new(
                     CanBcmOpCode::RxSetup,
                     CanBcmFlag::RX_FILTER_ID
                         | CanBcmFlag::SET_TIMER
@@ -86,18 +86,15 @@ fn async_can_cb(_evtfd: &AfbEvtFd, revent: u32, ctx: &AfbCtxData) -> Result<(), 
                 .set_timers(ctx.client.rate, ctx.client.watchdog)
                 .apply(&ctx.client.sockfd)
                 {
-                    Err(_error) => {
-                        afb_log_msg!(
-                            Warning,
-                            ctx.client.event,
-                            "fail-sockbmc-filter canid={} rate={} watchdog={}",
-                            canid,
-                            ctx.client.rate,
-                            ctx.client.watchdog
-                        );
-                        return Ok(());
-                    }
-                    Ok(()) => {}
+                    afb_log_msg!(
+                        Warning,
+                        ctx.client.event,
+                        "fail-sockbmc-filter canid={} rate={} watchdog={}",
+                        canid,
+                        ctx.client.rate,
+                        ctx.client.watchdog
+                    );
+                    return Ok(());
                 }
             }
         };
@@ -131,7 +128,7 @@ fn subscribe_cb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Re
     // parse api query
     let param = args.get::<&SubscribeParam>(0)?;
 
-    if param.get_canids().len() < 1 {
+    if param.get_canids().is_empty() {
         let error = AfbError::new("fail-empty-canids", 0, "pool canids list is empty");
         afb_log_msg!(Warning, request, &error);
         return Err(error);
@@ -163,11 +160,11 @@ fn subscribe_cb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Re
             } else {
                 event.finalize().unwrap();
             }
-
+            #[allow(clippy::arc_with_non_send_sync)]
             let client_data = Arc::new(AfbClientData {
                 uid: ctx.uid,
-                sockfd: sockfd,
-                event: event,
+                sockfd,
+                event,
                 rate: param.get_rate(),
                 watchdog: param.get_watchdog(),
             });
@@ -217,7 +214,7 @@ fn subscribe_cb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Re
     }
 
     // subscription to canid fail.
-    if can_error.len() > 0 {
+    if !can_error.is_empty() {
         let error = AfbError::new(
             "fail-canid-Subscribe",
             0,
@@ -247,7 +244,7 @@ fn unsubscribe_cb(
 
     let param = args.get::<&UnSubscribeParam>(0)?;
 
-    if param.get_canids().len() < 1 {
+    if param.get_canids().is_empty() {
         let error = AfbError::new("fail-empty-canids", 0, "canids list is empty");
         afb_log_msg!(Warning, request, &error);
         return Err(error);
@@ -265,7 +262,7 @@ fn unsubscribe_cb(
     }
 
     // subscription to canid fail.
-    if can_error.len() > 0 {
+    if !can_error.is_empty() {
         let error = AfbError::new(
             "fail-canid-Subscribe",
             0,
@@ -325,6 +322,7 @@ pub fn register(api: &mut AfbApi, config: &ApiUserData) -> Result<(), AfbError> 
         })
         .set_info("Subscribe a canid array")
         .set_usage("{'canids':[x,y,...,z],['rate':xx_ms],['watchdog':xx_ms]}")
+        .add_sample("{'canids':[266,257,599],'rate':250,'watchdog':1000}")?
         .finalize()?;
     api.add_verb(subscribe);
 
@@ -332,6 +330,7 @@ pub fn register(api: &mut AfbApi, config: &ApiUserData) -> Result<(), AfbError> 
         .set_callback(unsubscribe_cb)
         .set_info("Unsubscribe socket BMC cannids from session")
         .set_usage("{'canids':[x,y,...,z]}")
+        .add_sample("{'canids':[266,257,599]}")?
         .finalize()?;
     api.add_verb(unsubscribe);
 

@@ -28,7 +28,7 @@ use sockdata::prelude::*;
 pub struct ApiUserData {
     pub uid: &'static str,
     pub sockevt: &'static str,
-    pub canapi: &'static str,
+    pub _canapi: &'static str,
     pub candev: &'static str,
 }
 
@@ -88,9 +88,9 @@ pub fn binding_init(rootv4: AfbApiV4, jconf: JsoncObj) -> Result<&'static AfbApi
 
     let config = ApiUserData {
         uid: canuid,
-        sockevt: sockevt,
-        candev: candev,
-        canapi: canapi,
+        sockevt,
+        candev,
+        _canapi: canapi,
     };
 
     // register data converter
@@ -109,7 +109,7 @@ pub fn binding_init(rootv4: AfbApiV4, jconf: JsoncObj) -> Result<&'static AfbApi
     //create_pool_verbs(&mut canapi, jconf, pool).expect("create_pool_verbs failed");
     //canapi.finalize().expect("api finalize failed")
 
-    Ok(canapi.finalize()?)
+    canapi.finalize()
 }
 
 // register binding within libafb

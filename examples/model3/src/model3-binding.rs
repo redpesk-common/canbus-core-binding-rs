@@ -37,7 +37,6 @@ use crate::DbcModel3::*;
 
 use crate::dbcapi::*;
 use afbv4::prelude::*;
-use sockdata::prelude::*;
 
 pub struct ApiUserData {
     pub uid: &'static str,
@@ -76,10 +75,10 @@ pub fn binding_init(rootv4: AfbApiV4, jconf: JsoncObj) -> Result<&'static AfbApi
     let dbc_api = if let Ok(value) = jconf.get::<String>("dbc_api") {
         to_static_str(value)
     } else {
-        dbc_uid.clone()
+        dbc_uid
     };
 
-    let bmc_api = if let Ok(value) = jconf.get::<String>("sock_api") {
+    let _bmc_api = if let Ok(value) = jconf.get::<String>("sock_api") {
         to_static_str(value)
     } else {
         "sockcan"
@@ -97,23 +96,23 @@ pub fn binding_init(rootv4: AfbApiV4, jconf: JsoncObj) -> Result<&'static AfbApi
         "acl:sockcan"
     };
 
-    let api_usrdata = ApiUserData {
+    let _api_usrdata = ApiUserData {
         uid: dbc_uid,
-        candev: candev,
-        canapi: dbc_api.clone(),
+        candev,
+        canapi: dbc_api,
     };
 
     // create a new api
-    let mut can_api = AfbApi::new(dbc_uid)
+    let can_api = AfbApi::new(dbc_uid)
         .set_info(info)
         .set_permission(AfbPermission::new(to_static_str(acls.to_owned())))
         .seal(false);
 
     // open dbc can message pool and create one verb per message/signal
     let pool = Box::new(CanMsgPool::new(dbc_uid));
-    create_pool_verbs(&mut can_api, jconf, pool).expect("create_pool_verbs failed");
+    create_pool_verbs(can_api, jconf, pool).expect("create_pool_verbs failed");
 
-    Ok(can_api.finalize()?)
+    can_api.finalize()
 }
 
 // register binding within libafb

@@ -10,6 +10,14 @@ extern crate dbcparser;
 use dbcparser::prelude::*;
 
 fn main() {
+    // Déclare "afbv4" comme cfg connu → plus de warning
+    println!("cargo::rustc-check-cfg=cfg(afbv4)");
+
+    // (facultatif) active réellement le cfg si AFBV4=1
+    if std::env::var("AFBV4").is_ok() {
+        println!("cargo:rustc-cfg=afbv4");
+    }
+
     // let dir = concat!(env!("CARGO_TARGET_DIR", "debug"));
     // println!("cargo:rustc-link-search={}", dir);
     // println!("cargo:rustc-link-lib=liblibafb");
@@ -23,16 +31,28 @@ fn main() {
     println!("cargo:rerun-if-changed={}", dbc_infile);
 
     let header = "
-    // -----------------------------------------------------------------------
-    //              <- DBC file Rust mapping ->
-    // -----------------------------------------------------------------------
-    //  Do not exit this file it will be regenerated automatically by cargo.
-    //  Check:
-    //   - build.rs at project root for dynamically mapping
-    //   - example/demo/dbc-log/??? for static values
-    //  Reference: iot.bzh/Redpesk canbus-rs code generator
-    // -----------------------------------------------------------------------
-    ";
+// -----------------------------------------------------------------------
+//              <- DBC file Rust mapping ->
+// -----------------------------------------------------------------------
+//  Do not exit this file it will be regenerated automatically by cargo.
+//  Check:
+//   - build.rs at project root for dynamically mapping
+//   - example/demo/dbc-log/??? for static values
+//  Reference: iot.bzh/Redpesk canbus-rs code generator
+// -----------------------------------------------------------------------
+
+// Tell rustfmt (stable) to skip formatting this whole file
+#[rustfmt::skip]
+
+#[allow(
+    warnings,
+    clippy::all,
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::redundant_field_names,
+    clippy::similar_names
+)]
+";
     DbcParser::new("DbcBms")
         .dbcfile(dbc_infile)
         .outfile(dbc_outfile)

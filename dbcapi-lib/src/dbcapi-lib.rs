@@ -41,6 +41,7 @@ use sockdata::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+#[allow(clippy::upper_case_acronyms)]
 enum Action {
     SUBSCRIBE,
     UNSUBSCRIBE,
@@ -87,7 +88,8 @@ impl CanSigCtrl for SigPoolCtx {
         };
 
         // send event, count listener and update stamp
-        let listeners = match sig.get_status() {
+
+        match sig.get_status() {
             CanDataStatus::Updated => {
                 if (sig.get_stamp() - info.stamp) > info.rate * 1000 {
                     info.stamp = sig.get_stamp();
@@ -104,8 +106,7 @@ impl CanSigCtrl for SigPoolCtx {
                 };
                 info.listeners
             }
-        };
-        listeners // return active listener to pool
+        } // return active listener to pool
     }
 }
 
@@ -320,6 +321,7 @@ fn register_signal(
 
     let sig_verb = AfbVerb::new(sig_ref.get_name())
         .set_actions("['reset','read','subscribe','unsubscribe']")?
+        .add_sample("{'action':'subscribe','rate':250,'watchdog':5000,'flag':'all'}")?
         .set_callback(signal_vcb)
         .set_context(SigVerbCtx {
             data: sigdata.clone(),
@@ -598,9 +600,9 @@ fn message_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
 }
 
 struct SockBmcConfig {
-    uid: &'static str,
+    _uid: &'static str,
     bmc: &'static str,
-    evt: &'static str,
+    _evt: &'static str,
     jconf: JsoncObj,
     api: *const AfbApi,
 }
@@ -663,7 +665,7 @@ fn register_msg(
     let event = AfbEvent::new(msg_name).finalize()?;
     let vcbdata = Rc::new(MessageDataCtx {
         bmc: config.bmc,
-        event: event,
+        event,
         info: RefCell::new(info),
     });
 
@@ -671,15 +673,18 @@ fn register_msg(
         data: vcbdata.clone(),
     }));
 
-    msg_verb
-        .set_actions("['reset','read','subscribe','unsubscribe']")?
-        .set_callback(message_vcb)
-        .set_context(MessageVerbCtx {
-            msg_rfc: msg_rfc.clone(),
-            data: vcbdata.clone(),
-        })
-        .register(api.get_apiv4(), msg_acls);
-    api.add_verb(msg_verb.finalize()?);
+    unsafe {
+        msg_verb
+            .set_actions("['reset','read','subscribe','unsubscribe']")?
+            .add_sample("{'action':'subscribe','rate':250,'watchdog':5000,'flag':'new'}")?
+            .set_callback(message_vcb)
+            .set_context(MessageVerbCtx {
+                msg_rfc: msg_rfc.clone(),
+                data: vcbdata.clone(),
+            })
+            .register(api.get_apiv4(), msg_acls);
+        api.add_verb(msg_verb.finalize()?);
+    }
 
     // create signals verbs and group
     let mut group = AfbGroup::new(msg_name)
@@ -692,7 +697,9 @@ fn register_msg(
         group = group.add_verb(verb);
         group = group.add_event(event);
     }
-    group.register(api.get_apiv4(), msg_acls);
+    unsafe {
+        group.register(api.get_apiv4(), msg_acls);
+    }
     api.add_group(group);
 
     Ok(())
@@ -758,11 +765,11 @@ pub fn create_pool_verbs(
     let pool = Box::leak(pool_box);
 
     let bmc_config = SockBmcConfig {
-        uid: uid,
-        api: api,
-        bmc: bmc,
-        evt: evt,
-        jconf: jconf,
+        _uid: uid,
+        api,
+        bmc,
+        _evt: evt,
+        jconf,
     };
 
     // loop on message pool and create verbs
@@ -776,8 +783,10 @@ pub fn create_pool_verbs(
         .set_info("Receive low level BMC data frame")
         .set_pattern(pattern)
         .set_callback(bmc_event_cb)
-        .set_context(EvtUserData { pool: pool });
-    evt_handler.register(api.get_apiv4());
+        .set_context(EvtUserData { pool });
+    unsafe {
+        evt_handler.register(api.get_apiv4());
+    }
     evt_handler.finalize()?;
 
     // force api update
