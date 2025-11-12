@@ -321,8 +321,8 @@ pub fn register(api: &mut AfbApi, config: &ApiUserData) -> Result<(), AfbError> 
             candev: config.candev,
         })
         .set_info("Subscribe a canid array")
-        .set_usage("{'canids':[x,y,...,z],['rate':xx_ms],['watchdog':xx_ms]}")
-        .add_sample("{'canids':[266,257,599],'rate':250,'watchdog':1000}")?
+        .set_usage("{'canids':[x,y,...,z],['rate':xx_ms],['watchdog':xx_ms],['flag':'ALL|NEW']}")
+        .add_sample("{'canids':[266,257,599],'rate':250,'watchdog':1000,'flag':'ALL'}")?
         .finalize()?;
     api.add_verb(subscribe);
 

@@ -31,13 +31,16 @@ extern crate afbv4;
 extern crate dbcapi;
 extern crate sockcan;
 
-// include generated dbc message pool
+use std::any::Any; // needed for AfbApiControls::as_any
+
+// bring in the generated DBC message pool for this example
 include!("./__bms-dbcgen.rs");
 use crate::DbcBms::*;
 
 use crate::dbcapi::*;
 use afbv4::prelude::*;
 
+/// Per-API user data carried through lifecycle hooks (optional).
 pub struct ApiUserData {
     pub uid: &'static str,
     pub canapi: &'static str,
@@ -45,76 +48,99 @@ pub struct ApiUserData {
 }
 
 impl AfbApiControls for ApiUserData {
+    /// Called when the binder applies configuration to the API.
+    /// `jconf` is the JSON fragment passed at load time (or its `args` part depending on setup).
     fn config(&mut self, api: &AfbApi, jconf: JsoncObj) -> Result<(), AfbError> {
         afb_log_msg!(Debug, api, "api={} config={}", api.get_uid(), jconf);
         Ok(())
     }
 
-    // mandatory for downcasting back to custom api data object
+    /// Required so callers can downcast back to this concrete type.
     fn as_any(&mut self) -> &mut dyn Any {
         self
     }
 }
 
-// Binding init callback started at binding load time before any API exist
-// -----------------------------------------
+/// Binding entry point.
+/// Runs when the shared object is loaded; create and register the API here.
+///
+/// Order matters:
+/// 1) Build the API descriptor and declare dependencies
+/// 2) **Finalize** to obtain a valid apiv4 handle (non-NULL)
+/// 3) Register verbs/events using the finalized handle
 pub fn binding_init(rootv4: AfbApiV4, jconf: JsoncObj) -> Result<&'static AfbApi, AfbError> {
     afb_log_msg!(Info, rootv4, "config:{}", jconf);
+
+    // Optional CAN device name (defaults to vcan0 for development).
     let candev = if let Ok(value) = jconf.get::<String>("dev") {
         to_static_str(value)
     } else {
         "vcan0"
     };
 
+    // Public API uid (fallback: "sockcan").
     let dbc_uid = if let Ok(value) = jconf.get::<String>("uid") {
         to_static_str(value)
     } else {
         "sockcan"
     };
 
+    // Name of the DBC-facing API (default to same as uid).
     let dbc_api = if let Ok(value) = jconf.get::<String>("dbc_api") {
         to_static_str(value)
     } else {
         dbc_uid
     };
 
+    // Lower-level CAN service dependency (the sockcan binding).
     let bmc_api = if let Ok(value) = jconf.get::<String>("sock_api") {
         to_static_str(value)
     } else {
         "sockcan"
     };
 
+    // Optional human-readable info text.
     let info = if let Ok(value) = jconf.get::<String>("info") {
         to_static_str(value)
     } else {
         ""
     };
 
+    // Optional ACL/permission string.
     let acls = if let Ok(value) = jconf.get::<String>("acls") {
         to_static_str(value)
     } else {
         "acl:sockcan"
     };
 
+    // Example userdata (attach if you need it in hooks).
     let _api_usrdata = ApiUserData {
         uid: dbc_uid,
         candev,
         canapi: dbc_api,
     };
 
-    // create a new api
+    // Build the API descriptor:
+    // - set public name
+    // - attach info and permissions
+    // - keep unsealed so we can still register things
+    // - declare dependency on the sockcan service
     let can_api = AfbApi::new(dbc_uid)
         .set_info(info)
         .set_permission(AfbPermission::new(to_static_str(acls.to_owned())))
         .seal(false)
         .require_api(bmc_api);
 
-    // open dbc can message pool and create one verb per message/signal
-    let pool = Box::new(CanMsgPool::new(dbc_uid));
-    create_pool_verbs(can_api, jconf, pool).expect("create_pool_verbs failed");
+    // 1) finalize to obtain a valid apiv4 handle
+    let api = can_api.finalize()?;
 
-    can_api.finalize()
+    // 2) create/register verbs & events (requires finalized API)
+    let pool = Box::new(CanMsgPool::new(dbc_uid));
+    create_pool_verbs(api, jconf, pool)?;
+
+    // 3) return the finalized API to the binder
+    Ok(api)
 }
 
-// register binding within libafb
+// Register the binding entry point with libafb.
 AfbBindingRegister!(binding_init);

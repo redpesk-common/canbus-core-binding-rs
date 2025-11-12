@@ -1,30 +1,32 @@
 {
-  "name": "afb-test",
+  "name": "afb-sockbms-test",
   "no-ldpaths": true,
-  "alias": ["/devtools:/usr/share/afb-ui-devtools/binder"],
+  "alias": [
+    "/devtools:/usr/share/afb-ui-devtools/binder"
+  ],
   "no_httpd": true,
   "trace-api": "all",
   "trace-req": "all",
   "trace-evt": "all",
-
   "binding": [
     {
-        "uid": "sockbmc-binding",
-        "path": "$HOME/.cargo/build/debug/libafb_sockbmc.so",
-        "info": "RUST sockbmc/DBC APIs"
+      "uid": "sockcan",
+      "path": "${CARGO_TARGET_DIR}/debug/libafb_sockcan.so",
+      "info": "CAN raw socket service"
     },
     {
-        "uid": "tap-test-binding",
-        "path": "$HOME/.cargo/build/debug/examples/libtap_sockbmc.so",
-        "info": "Rust sockbmc API TAP/Test"
+      "uid": "sockbms-binding",
+      "path": "${CARGO_TARGET_DIR}/debug/libafb_bms.so",
+      "require": [
+        "sockcan"
+      ],
+      "info": "RUST sockbmc/DBC APIs",
+      "args": {
+        "dev": "vcan0",
+        "uid": "sockbms",
+        "sock_api": "sockcan",
+        "sock_evt": "bmc-event"
+      }
     }
-  ],
-
-  "set" : {
-    "tap-test": {
-      "autostart": true,
-      "autoexit": true,
-      "output": "tap"
-    }
-  }
+  ]
 }
