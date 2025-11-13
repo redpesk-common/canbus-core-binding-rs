@@ -50,29 +50,16 @@ impl AfbApiControls for ApiUserData {
 pub fn binding_init(rootv4: AfbApiV4, jconf: JsoncObj) -> Result<&'static AfbApi, AfbError> {
     afb_log_msg!(Info, rootv4, "config:{}", jconf);
 
-    let candev = if let Ok(value) = jconf.get::<String>("dev") {
-        to_static_str(value)
-    } else {
-        "vcan0"
-    };
+    let candev =
+        if let Ok(value) = jconf.get::<String>("dev") { to_static_str(value) } else { "vcan0" };
 
-    let canuid = if let Ok(value) = jconf.get::<String>("uid") {
-        to_static_str(value)
-    } else {
-        "sockcan"
-    };
+    let canuid =
+        if let Ok(value) = jconf.get::<String>("uid") { to_static_str(value) } else { "sockcan" };
 
-    let canapi = if let Ok(value) = jconf.get::<String>("sock_api") {
-        to_static_str(value)
-    } else {
-        canuid
-    };
+    let canapi =
+        if let Ok(value) = jconf.get::<String>("sock_api") { to_static_str(value) } else { canuid };
 
-    let info = if let Ok(value) = jconf.get::<String>("info") {
-        to_static_str(value)
-    } else {
-        ""
-    };
+    let info = if let Ok(value) = jconf.get::<String>("info") { to_static_str(value) } else { "" };
 
     let sockevt = if let Ok(value) = jconf.get::<String>("sockevt") {
         to_static_str(value)
@@ -86,12 +73,7 @@ pub fn binding_init(rootv4: AfbApiV4, jconf: JsoncObj) -> Result<&'static AfbApi
         "acl:sockcan"
     };
 
-    let config = ApiUserData {
-        uid: canuid,
-        sockevt,
-        candev,
-        _canapi: canapi,
-    };
+    let config = ApiUserData { uid: canuid, sockevt, candev, _canapi: canapi };
 
     // register data converter
     sockdata_register(rootv4).expect("sockdata_register failed");

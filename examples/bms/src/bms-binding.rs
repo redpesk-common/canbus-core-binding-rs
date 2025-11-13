@@ -72,25 +72,16 @@ pub fn binding_init(rootv4: AfbApiV4, jconf: JsoncObj) -> Result<&'static AfbApi
     afb_log_msg!(Info, rootv4, "config:{}", jconf);
 
     // Optional CAN device name (defaults to vcan0 for development).
-    let candev = if let Ok(value) = jconf.get::<String>("dev") {
-        to_static_str(value)
-    } else {
-        "vcan0"
-    };
+    let candev =
+        if let Ok(value) = jconf.get::<String>("dev") { to_static_str(value) } else { "vcan0" };
 
     // Public API uid (fallback: "sockcan").
-    let dbc_uid = if let Ok(value) = jconf.get::<String>("uid") {
-        to_static_str(value)
-    } else {
-        "sockcan"
-    };
+    let dbc_uid =
+        if let Ok(value) = jconf.get::<String>("uid") { to_static_str(value) } else { "sockcan" };
 
     // Name of the DBC-facing API (default to same as uid).
-    let dbc_api = if let Ok(value) = jconf.get::<String>("dbc_api") {
-        to_static_str(value)
-    } else {
-        dbc_uid
-    };
+    let dbc_api =
+        if let Ok(value) = jconf.get::<String>("dbc_api") { to_static_str(value) } else { dbc_uid };
 
     // Lower-level CAN service dependency (the sockcan binding).
     let bmc_api = if let Ok(value) = jconf.get::<String>("sock_api") {
@@ -100,11 +91,7 @@ pub fn binding_init(rootv4: AfbApiV4, jconf: JsoncObj) -> Result<&'static AfbApi
     };
 
     // Optional human-readable info text.
-    let info = if let Ok(value) = jconf.get::<String>("info") {
-        to_static_str(value)
-    } else {
-        ""
-    };
+    let info = if let Ok(value) = jconf.get::<String>("info") { to_static_str(value) } else { "" };
 
     // Optional ACL/permission string.
     let acls = if let Ok(value) = jconf.get::<String>("acls") {
@@ -114,11 +101,7 @@ pub fn binding_init(rootv4: AfbApiV4, jconf: JsoncObj) -> Result<&'static AfbApi
     };
 
     // Example userdata (attach if you need it in hooks).
-    let _api_usrdata = ApiUserData {
-        uid: dbc_uid,
-        candev,
-        canapi: dbc_api,
-    };
+    let _api_usrdata = ApiUserData { uid: dbc_uid, candev, canapi: dbc_api };
 
     // Build the API descriptor:
     // - set public name

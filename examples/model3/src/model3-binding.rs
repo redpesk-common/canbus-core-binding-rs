@@ -60,23 +60,14 @@ impl AfbApiControls for ApiUserData {
 // -----------------------------------------
 pub fn binding_init(rootv4: AfbApiV4, jconf: JsoncObj) -> Result<&'static AfbApi, AfbError> {
     afb_log_msg!(Info, rootv4, "config:{}", jconf);
-    let candev = if let Ok(value) = jconf.get::<String>("dev") {
-        to_static_str(value)
-    } else {
-        "vcan0"
-    };
+    let candev =
+        if let Ok(value) = jconf.get::<String>("dev") { to_static_str(value) } else { "vcan0" };
 
-    let dbc_uid = if let Ok(value) = jconf.get::<String>("uid") {
-        to_static_str(value)
-    } else {
-        "sockcan"
-    };
+    let dbc_uid =
+        if let Ok(value) = jconf.get::<String>("uid") { to_static_str(value) } else { "sockcan" };
 
-    let dbc_api = if let Ok(value) = jconf.get::<String>("dbc_api") {
-        to_static_str(value)
-    } else {
-        dbc_uid
-    };
+    let dbc_api =
+        if let Ok(value) = jconf.get::<String>("dbc_api") { to_static_str(value) } else { dbc_uid };
 
     let _bmc_api = if let Ok(value) = jconf.get::<String>("sock_api") {
         to_static_str(value)
@@ -84,11 +75,7 @@ pub fn binding_init(rootv4: AfbApiV4, jconf: JsoncObj) -> Result<&'static AfbApi
         "sockcan"
     };
 
-    let info = if let Ok(value) = jconf.get::<String>("info") {
-        to_static_str(value)
-    } else {
-        ""
-    };
+    let info = if let Ok(value) = jconf.get::<String>("info") { to_static_str(value) } else { "" };
 
     let acls = if let Ok(value) = jconf.get::<String>("acls") {
         to_static_str(value)
@@ -96,11 +83,7 @@ pub fn binding_init(rootv4: AfbApiV4, jconf: JsoncObj) -> Result<&'static AfbApi
         "acl:sockcan"
     };
 
-    let _api_usrdata = ApiUserData {
-        uid: dbc_uid,
-        candev,
-        canapi: dbc_api,
-    };
+    let _api_usrdata = ApiUserData { uid: dbc_uid, candev, canapi: dbc_api };
 
     // create a new api
     let can_api = AfbApi::new(dbc_uid)

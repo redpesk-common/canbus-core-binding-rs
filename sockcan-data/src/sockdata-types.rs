@@ -37,11 +37,7 @@ pub struct CanBmcError {
 
 impl CanBmcError {
     pub fn new(uid: String, status: i32, info: String) -> Self {
-        CanBmcError {
-            uid,
-            status,
-            info,
-        }
+        CanBmcError { uid, status, info }
     }
     pub fn get_uid(&self) -> String {
         self.uid.clone()
@@ -83,13 +79,7 @@ pub struct DataBmcSig {
 
 impl CanBmcData {
     pub fn new(canid: u32, opcode: CanBcmOpCode, stamp: u64, data: Vec<u8>, len: u8) -> Self {
-        CanBmcData {
-            canid,
-            len,
-            stamp,
-            opcode,
-            data,
-        }
+        CanBmcData { canid, len, stamp, opcode, data }
     }
     pub fn get_len(&self) -> u8 {
         self.len
@@ -125,12 +115,7 @@ pub struct SubscribeParam {
 }
 impl SubscribeParam {
     pub fn new(canids: Vec<u32>, watchdog: u64, rate: u64, flag: SubscribeFlag) -> Self {
-        SubscribeParam {
-            rate,
-            watchdog,
-            canids,
-            flag,
-        }
+        SubscribeParam { rate, watchdog, canids, flag }
     }
     pub fn get_rate(&self) -> u64 {
         self.rate

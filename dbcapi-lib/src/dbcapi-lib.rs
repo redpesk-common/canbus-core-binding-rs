@@ -80,7 +80,7 @@ impl CanSigCtrl for SigPoolCtx {
                     "pool-sig-notification: failed to get event info"
                 );
                 return -1;
-            }
+            },
             Ok(info) => info,
         };
 
@@ -99,7 +99,7 @@ impl CanSigCtrl for SigPoolCtx {
                     info.listeners = self.data.event.push(signal);
                 };
                 info.listeners
-            }
+            },
             _ => {
                 if (sig.get_stamp() - info.stamp) > info.watchdog * 1000
                     && info.flag == SubscribeFlag::ALL
@@ -108,7 +108,7 @@ impl CanSigCtrl for SigPoolCtx {
                     info.listeners = self.data.event.push(signal);
                 };
                 info.listeners
-            }
+            },
         }
     }
 }
@@ -132,13 +132,10 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
         "READ" => Action::READ,
         "RESET" => Action::RESET,
         _ => {
-            let error = AfbError::new(
-                "invalid-action",
-                0,
-                "expect: SUBSCRIBE|UNSUBSCRIBE|READ|RESET",
-            );
+            let error =
+                AfbError::new("invalid-action", 0, "expect: SUBSCRIBE|UNSUBSCRIBE|READ|RESET");
             return Err(error);
-        }
+        },
     };
 
     // Borrow underlying signal/message instances and pool infos.
@@ -151,7 +148,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
                 "internal pool error (sig rfc cell already used)",
             );
             return Err(afb_add_trace!(error));
-        }
+        },
     };
 
     let msg = match ctx.msg_rfc.try_borrow() {
@@ -163,7 +160,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
                 "internal pool error (msg rfc cell already used)",
             );
             return Err(afb_add_trace!(error));
-        }
+        },
     };
 
     let mut msg_info = match ctx.msg_ctx.info.try_borrow_mut() {
@@ -175,7 +172,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
                 "internal pool error (msg info cell already used)",
             );
             return Err(afb_add_trace!(error));
-        }
+        },
     };
 
     let mut sig_info = match ctx.data.info.try_borrow_mut() {
@@ -187,7 +184,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
                 "internal pool error (sig info cell already used)",
             );
             return Err(afb_add_trace!(error));
-        }
+        },
     };
 
     match action {
@@ -244,27 +241,17 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
                 )?;
             }
             sig_info.listeners += 1; // we have at least one listener now
-            request.reply(
-                format!(
-                    "Subscribe (canid:{}) sig:{} OK",
-                    msg.get_id(),
-                    sig.get_name(),
-                ),
-                0,
-            );
-        }
+            request
+                .reply(format!("Subscribe (canid:{}) sig:{} OK", msg.get_id(), sig.get_name(),), 0);
+        },
 
         Action::UNSUBSCRIBE => {
             ctx.data.event.unsubscribe(request)?;
             request.reply(
-                format!(
-                    "UnSubscribe (canid:{}) sig:{} OK",
-                    msg.get_id(),
-                    sig.get_name(),
-                ),
+                format!("UnSubscribe (canid:{}) sig:{} OK", msg.get_id(), sig.get_name(),),
                 0,
             );
-        }
+        },
 
         Action::READ => {
             // Return current signal snapshot.
@@ -277,15 +264,12 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
             let mut params = AfbParams::new();
             params.push(sig_data)?;
             request.reply(params, 0);
-        }
+        },
 
         Action::RESET => {
             sig.reset();
-            request.reply(
-                format!("Reset (canid:{}) sig:{} OK", msg.get_id(), sig.get_name(),),
-                0,
-            );
-        }
+            request.reply(format!("Reset (canid:{}) sig:{} OK", msg.get_id(), sig.get_name(),), 0);
+        },
     };
     Ok(())
 }
@@ -313,15 +297,10 @@ fn register_signal(
         listeners: 0,
         flag: SubscribeFlag::NEW,
     };
-    let sigdata = Rc::new(SigDataCtx {
-        event: sig_event,
-        info: RefCell::new(info),
-    });
+    let sigdata = Rc::new(SigDataCtx { event: sig_event, info: RefCell::new(info) });
 
     // Attach controller to push updates into the event.
-    sig_ref.set_callback(Box::new(SigPoolCtx {
-        data: sigdata.clone(),
-    }));
+    sig_ref.set_callback(Box::new(SigPoolCtx { data: sigdata.clone() }));
 
     // Build and finalize the verb for this signal.
     let sig_verb = AfbVerb::new(sig_ref.get_name())
@@ -360,11 +339,8 @@ struct MessagePoolCtx {
 // Called by the CAN pool when a message gets updated.
 impl CanMsgCtrl for MessagePoolCtx {
     fn msg_notification(&self, msg: &dyn CanDbcMessage) {
-        let msg_value = DataBcmMsg {
-            canid: msg.get_id(),
-            stamp: msg.get_stamp(),
-            status: msg.get_status(),
-        };
+        let msg_value =
+            DataBcmMsg { canid: msg.get_id(), stamp: msg.get_stamp(), status: msg.get_status() };
 
         let info = match self.data.info.try_borrow() {
             Err(_) => {
@@ -374,7 +350,7 @@ impl CanMsgCtrl for MessagePoolCtx {
                     "pool-msg-notification: failed to get event info"
                 );
                 return;
-            }
+            },
             Ok(info) => info,
         };
 
@@ -393,7 +369,7 @@ impl CanMsgCtrl for MessagePoolCtx {
                             "internal pool error (sig rfc cell already used)",
                         );
                         return Err(error);
-                    }
+                    },
                 };
                 let sig_value = DataBmcSig {
                     name: sig.get_name().to_string(),
@@ -407,10 +383,10 @@ impl CanMsgCtrl for MessagePoolCtx {
                         if sig.get_status() == CanDataStatus::Updated {
                             args.push(sig_value)?;
                         }
-                    }
+                    },
                     SubscribeFlag::ALL => {
                         args.push(sig_value)?;
-                    }
+                    },
                 }
             }
 
@@ -425,7 +401,7 @@ impl CanMsgCtrl for MessagePoolCtx {
                     "pool-msg-notification: failed to build event params"
                 );
                 return;
-            }
+            },
             Ok(value) => value,
         };
 
@@ -435,10 +411,7 @@ impl CanMsgCtrl for MessagePoolCtx {
             afb_log_msg!(
                 Notice,
                 self.data.event,
-                format!(
-                    "msg-empty-listener: clearing canid={} subscription",
-                    msg.get_id()
-                )
+                format!("msg-empty-listener: clearing canid={} subscription", msg.get_id())
             );
 
             // No active listener: unsubscribe from backend.
@@ -451,12 +424,12 @@ impl CanMsgCtrl for MessagePoolCtx {
 
             // Reset per-message throttling so the next subscribe recomputes it.
             match self.data.info.try_borrow_mut() {
-                Err(_) => {}
+                Err(_) => {},
                 Ok(mut info) => {
                     info.stamp = 0;
                     info.rate = 0;
                     info.watchdog = 0;
-                }
+                },
             }
         }
     }
@@ -473,26 +446,20 @@ fn message_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
         "READ" => Action::READ,
         "RESET" => Action::RESET,
         _ => {
-            let error = AfbError::new(
-                "invalid-action",
-                0,
-                "expect: SUBSCRIBE|UNSUBSCRIBE|READ|RESET",
-            );
+            let error =
+                AfbError::new("invalid-action", 0, "expect: SUBSCRIBE|UNSUBSCRIBE|READ|RESET");
             return Err(error);
-        }
+        },
     };
 
     // Borrow the message and its runtime info.
     let mut msg = match ctx.msg_rfc.try_borrow_mut() {
         Ok(value) => value,
         Err(_) => {
-            let error = AfbError::new(
-                "fail-borrow-msg",
-                0,
-                "internal pool error (msg cell already used)",
-            );
+            let error =
+                AfbError::new("fail-borrow-msg", 0, "internal pool error (msg cell already used)");
             return Err(afb_add_trace!(error));
-        }
+        },
     };
 
     let mut msg_info = match ctx.data.info.try_borrow_mut() {
@@ -504,7 +471,7 @@ fn message_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
                 "internal pool error (info cell already used)",
             );
             return Err(afb_add_trace!(error));
-        }
+        },
     };
 
     match action {
@@ -552,27 +519,17 @@ fn message_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
                     ),
                 )?;
             }
-            request.reply(
-                format!(
-                    "Subscribe (canid:{}) msg:{} OK",
-                    msg.get_id(),
-                    msg.get_name(),
-                ),
-                0,
-            );
-        }
+            request
+                .reply(format!("Subscribe (canid:{}) msg:{} OK", msg.get_id(), msg.get_name(),), 0);
+        },
 
         Action::UNSUBSCRIBE => {
             ctx.data.event.unsubscribe(request)?;
             request.reply(
-                format!(
-                    "UnSubscribe (canid:{}) msg:{} OK",
-                    msg.get_id(),
-                    msg.get_name(),
-                ),
+                format!("UnSubscribe (canid:{}) msg:{} OK", msg.get_id(), msg.get_name(),),
                 0,
             );
-        }
+        },
 
         Action::READ => {
             // Return current message snapshot.
@@ -584,7 +541,7 @@ fn message_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
             let mut params = AfbParams::new();
             params.push(msg_data)?;
             request.reply(params, 0);
-        }
+        },
 
         Action::RESET => match msg.reset() {
             Err(_) => {
@@ -593,13 +550,11 @@ fn message_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
                     0,
                     "internal pool (fail to get borrow mut)",
                 ))
-            }
+            },
             Ok(()) => {
-                request.reply(
-                    format!("Reset (canid:{}) msg:{} OK", msg.get_id(), msg.get_name(),),
-                    0,
-                );
-            }
+                request
+                    .reply(format!("Reset (canid:{}) msg:{} OK", msg.get_id(), msg.get_name(),), 0);
+            },
         },
     };
     Ok(())
@@ -627,7 +582,7 @@ fn register_msg(
                 0,
                 "internal pool (fail to get borrow mut)",
             ))
-        }
+        },
         Ok(msg) => msg,
     };
 
@@ -669,16 +624,10 @@ fn register_msg(
 
     // Create a message-wide event and its runtime context.
     let event = AfbEvent::new(msg_name).finalize()?;
-    let vcbdata = Rc::new(MessageDataCtx {
-        bmc: config.bmc,
-        event,
-        info: RefCell::new(info),
-    });
+    let vcbdata = Rc::new(MessageDataCtx { bmc: config.bmc, event, info: RefCell::new(info) });
 
     // Attach controller so pool updates push to this event.
-    msg.set_callback(Box::new(MessagePoolCtx {
-        data: vcbdata.clone(),
-    }));
+    msg.set_callback(Box::new(MessagePoolCtx { data: vcbdata.clone() }));
 
     // Finalize and register the message verb.
     unsafe {
@@ -686,10 +635,7 @@ fn register_msg(
             .set_actions("['reset','read','subscribe','unsubscribe']")?
             .add_sample("{'action':'subscribe','rate':250,'watchdog':5000,'flag':'new'}")?
             .set_callback(message_vcb)
-            .set_context(MessageVerbCtx {
-                msg_rfc: msg_rfc.clone(),
-                data: vcbdata.clone(),
-            })
+            .set_context(MessageVerbCtx { msg_rfc: msg_rfc.clone(), data: vcbdata.clone() })
             .register(api.get_apiv4(), msg_acls);
     }
 
@@ -729,7 +675,7 @@ fn bmc_event_cb(event: &AfbEventMsg, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
             );
             afb_log_msg!(Critical, event, &error);
             return Ok(());
-        }
+        },
         Ok(value) => value,
     };
 
@@ -750,8 +696,8 @@ fn bmc_event_cb(event: &AfbEventMsg, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
             );
             afb_log_msg!(Critical, event, &error);
             return Ok(());
-        }
-        Ok(_msg) => {}
+        },
+        Ok(_msg) => {},
     };
     Ok(())
 }
@@ -779,13 +725,7 @@ pub fn create_pool_verbs(
     // Leak the pool to bind its lifetime to the API (intended design in this binding).
     let pool = Box::leak(pool_box);
 
-    let bmc_config = SockBmcConfig {
-        _uid: uid,
-        api,
-        bmc,
-        _evt: evt,
-        jconf,
-    };
+    let bmc_config = SockBmcConfig { _uid: uid, api, bmc, _evt: evt, jconf };
 
     // Register message verbs + signal groups for each message in the pool.
     for msg in pool.get_messages() {
