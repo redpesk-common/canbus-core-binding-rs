@@ -35,7 +35,7 @@ extern crate sockcan;
 include!("./__model3-dbcgen.rs");
 use crate::DbcModel3::*;
 
-use crate::dbcapi::*;
+use crate::dbcapi::create_pool_verbs;
 use afbv4::prelude::*;
 
 pub struct ApiUserData {

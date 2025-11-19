@@ -35,9 +35,14 @@ use std::any::Any; // needed for AfbApiControls::as_any
 
 // bring in the generated DBC message pool for this example
 include!("./__bms-dbcgen.rs");
-use crate::DbcBms::*;
+use crate::DbcBms::CanMsgPool;
 
-use crate::dbcapi::*;
+use crate::dbcapi::create_pool_verbs;
+//use afbv4::prelude::{
+//    afb_log_msg, afb_log_raw, to_static_str, AfbApi, AfbApiControls, AfbApiV4, AfbBindingRegister,
+//    AfbError, AfbLogLevel, AfbLogMsg, AfbPermission, DbgInfo, JsoncObj, AFB_ABORT, AFB_OK,
+//};
+
 use afbv4::prelude::*;
 
 /// Per-API user data carried through lifecycle hooks (optional).

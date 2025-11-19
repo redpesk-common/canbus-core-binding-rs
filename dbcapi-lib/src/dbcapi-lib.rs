@@ -36,8 +36,16 @@ const MSG_DFT_WATCHDOG: u64 = 10000;
 
 // libafb + sockcan/sockdata imports
 use afbv4::prelude::*;
-use sockcan::prelude::*;
-use sockdata::prelude::*;
+
+use sockcan::prelude::{
+    CanDataStatus, CanDbcMessage, CanDbcPool, CanDbcSignal, CanMsgCtrl, CanMsgData, CanSigCtrl,
+};
+
+use sockdata::prelude::{
+    sockdata_register, CanBmcData, DataBcmMsg, DataBmcSig, SubscribeFlag, SubscribeParam,
+    UnSubscribeParam,
+};
+
 use std::cell::RefCell;
 use std::rc::Rc;
 
