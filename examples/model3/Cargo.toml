@@ -13,11 +13,11 @@ bitvec = { version = "1.0", default-features = false }
 bitflags = { version = "2"}
 lib_sockdata= {path ="../../sockcan-data"}
 lib_dbcapi= {path ="../../dbcapi-lib"}
-lib_sockcan= {path= "../../../canbus-rs/sockcan"}
+lib_sockcan= {path= "../../../canbus-core-rs/sockcan"}
 afbv4= {path= "../../../afb-librust/afb-librs"}
 
 [build-dependencies]
-lib_dbcparser= {path= "../../../canbus-rs/dbcparser"}
+dbcparser= {path= "../../../canforge-rs/dbcparser"}
 
 [lib]
 name = "afb_model3"

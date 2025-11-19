@@ -51,13 +51,13 @@ cargo fmt --all
 
 ## clippy (linting that prevents subtle bugs)
 
-### what it guarantees
+### clippy:what it guarantees
 
 - **Bug prevention:** catches suspicious code (`unwrap()` in tests ok, in prod not ok; needless clones; wrong iterator bounds; `Mutex` in async contexts; etc.).
 - **Idiomatic Rust:** nudges toward patterns the ecosystem expects, improving readability and performance.
 - **Security hygiene:** warns about `panic!` in FFI, `mem::uninitialized`, or non-`Send`/`Sync` in shared contexts, among many others.
 
-### organization policy (recommended)
+### clippy:organization policy (recommended)
 
 Clippy runs on every commit and in CI, with warnings elevated to errors.
 
@@ -85,13 +85,13 @@ cargo clippy --all-targets --all-features -- -D warnings -W clippy::pedantic
 
 Documentation is part of the public API and must always compile **without warnings**.
 
-### what it guarantees
+### documentation:what it guarantees
 
 - **Discoverability:** users and contributors can understand APIs directly from `cargo doc`.
 - **Quality assurance:** broken links or outdated examples are caught early.
 - **Continuous integration:** docs are verified just like code.
 
-### organization policy (recommended)
+### documentation:organization policy (recommended)
 
 1. Every public item (`pub`, `pub(crate)`) must have a Rustdoc comment (`///` or `//!`).
 2. Code examples in documentation must compile successfully (doctests are enabled by default).
