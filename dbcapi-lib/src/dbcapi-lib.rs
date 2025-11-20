@@ -282,10 +282,11 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
     Ok(())
 }
 
-/// Register a signal verb and its event; returns (&verb, &event) for grouping.
 fn register_signal(
     _config: &SockBmcConfig,
     msg_ctx: &Rc<MessageDataCtx>,
+    _msg_name_dbg: &'static str,
+    _msg_id_dbg: u32,
     msg_rfc: &Rc<RefCell<Box<dyn CanDbcMessage>>>,
     sig_rfc: &Rc<RefCell<Box<dyn CanDbcSignal>>>,
 ) -> Result<(&'static AfbVerb, &'static AfbEvent), AfbError> {
@@ -294,8 +295,10 @@ fn register_signal(
         Ok(sig) => sig,
     };
 
+    let sig_name: &'static str = sig_ref.get_name();
+
     // Create an event per signal.
-    let sig_event = AfbEvent::new(sig_ref.get_name()).finalize()?;
+    let sig_event = AfbEvent::new(sig_name).finalize()?;
 
     // Initialize per-signal runtime context.
     let info = PoolInfoCtx {
@@ -311,17 +314,23 @@ fn register_signal(
     sig_ref.set_callback(Box::new(SigPoolCtx { data: sigdata.clone() }));
 
     // Build and finalize the verb for this signal.
-    let sig_verb = AfbVerb::new(sig_ref.get_name())
-        .set_actions("['reset','read','subscribe','unsubscribe']")?
-        .add_sample("{'action':'subscribe','rate':250,'watchdog':5000,'flag':'all'}")?
-        .set_callback(signal_vcb)
-        .set_context(SigVerbCtx {
-            data: sigdata.clone(),
-            sig_rfc: sig_rfc.clone(),
-            msg_rfc: msg_rfc.clone(),
-            msg_ctx: msg_ctx.clone(),
-        })
-        .finalize()?;
+    let mut sig_verb = AfbVerb::new(sig_name);
+
+    sig_verb = sig_verb.set_actions("['reset','read','subscribe','unsubscribe']")?;
+
+    sig_verb =
+        sig_verb.add_sample("{'action':'subscribe','rate':250,'watchdog':5000,'flag':'all'}")?;
+
+    sig_verb = sig_verb.set_callback(signal_vcb);
+
+    sig_verb = sig_verb.set_context(SigVerbCtx {
+        data: sigdata.clone(),
+        sig_rfc: sig_rfc.clone(),
+        msg_rfc: msg_rfc.clone(),
+        msg_ctx: msg_ctx.clone(),
+    });
+
+    let sig_verb = sig_verb.finalize()?;
 
     Ok((sig_verb, sig_event))
 }
@@ -595,6 +604,7 @@ fn register_msg(
     };
 
     let msg_name = msg.get_name();
+    let msg_id = msg.get_id();
 
     let mut msg_acls = AFB_NO_AUTH;
     let api = unsafe { &mut *(config.api as *const _ as *mut AfbApi) };
@@ -652,11 +662,22 @@ fn register_msg(
         .add_event(event)
         .set_info(to_static_str(format!("(canid:{})", msg.get_id())));
 
-    for sig_rfc in msg.get_signals() {
-        let (verb, event) = register_signal(config, &vcbdata, msg_rfc, sig_rfc)?;
+    // Register each signal verb + event and add it to the group, with debug prints.
+    for sig_rfc in msg.get_signals().iter() {
+        {
+            match sig_rfc.try_borrow() {
+                Ok(_sig) => {},
+                Err(_e) => {},
+            }
+        }
+
+        // Now actually register the signal; borrow from above is dropped.
+        let (verb, event) = register_signal(config, &vcbdata, msg_name, msg_id, msg_rfc, sig_rfc)?;
         group = group.add_verb(verb);
         group = group.add_event(event);
     }
+
+    // Final registration of the group (with optional debug).
     unsafe {
         group.register(api.get_apiv4(), msg_acls);
     }
@@ -736,7 +757,15 @@ pub fn create_pool_verbs(
     let bmc_config = SockBmcConfig { _uid: uid, api, bmc, _evt: evt, jconf };
 
     // Register message verbs + signal groups for each message in the pool.
-    for msg in pool.get_messages() {
+    // Add some debug prints around the loop.
+    for msg in pool.get_messages().iter() {
+        // Try to inspect the message before registering it.
+        match msg.try_borrow() {
+            Ok(_m) => {},
+            Err(_e) => {},
+        }
+
+        // Call register_msg as before; if it fails, we know at which index / name we were.
         register_msg(&bmc_config, msg)?
     }
 

@@ -89,7 +89,6 @@ pub fn binding_init(rootv4: AfbApiV4, jconf: JsoncObj) -> Result<&'static AfbApi
     // register verbs and events
     verbs::register(canapi, &config).expect("verbs register failed");
     //create_pool_verbs(&mut canapi, jconf, pool).expect("create_pool_verbs failed");
-    //canapi.finalize().expect("api finalize failed")
 
     canapi.finalize()
 }
