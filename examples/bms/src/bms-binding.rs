@@ -119,15 +119,9 @@ pub fn binding_init(rootv4: AfbApiV4, jconf: JsoncObj) -> Result<&'static AfbApi
         .seal(false)
         .require_api(bmc_api);
 
-    // 1) finalize to obtain a valid apiv4 handle
-    let api = can_api.finalize()?;
-
-    // 2) create/register verbs & events (requires finalized API)
     let pool = Box::new(CanMsgPool::new(dbc_uid));
-    create_pool_verbs(api, jconf, pool)?;
-
-    // 3) return the finalized API to the binder
-    Ok(api)
+    create_pool_verbs(rootv4, can_api, jconf, pool)?;
+    can_api.finalize()
 }
 
 // Register the binding entry point with libafb.

@@ -239,6 +239,7 @@ fn unsubscribe_cb(
     // Subscribe to bmc can event
     let mut can_error: Vec<u32> = Vec::new();
     for canid in param.get_canids() {
+        //TODO: Make comment
         let mut filter = SockBcmCmd::new(CanBcmOpCode::RxDelete, CanBcmFlag::NONE, *canid);
 
         match filter.apply(&session.client.sockfd) {

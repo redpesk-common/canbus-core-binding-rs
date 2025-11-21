@@ -59,7 +59,7 @@ fn main() {
         .header(header)
         .range_check(true)
         .serde_json(true)
-        .whitelist(vec![0x201]) // restrict generated code size to candump.log messages
+        .whitelist(vec![545]) // restrict generated code size to candump.log messages
         .generate()
         .expect("Fail to parse dbc-file'\n");
 }
