@@ -84,11 +84,8 @@ pub fn binding_init(rootv4: AfbApiV4, jconf: JsoncObj) -> Result<&'static AfbApi
         .set_permission(AfbPermission::new(to_static_str(acls.to_owned())))
         .seal(false);
 
-    // open dbc can message pool and create one verb per message/signal
-    //let pool = Box::new(CanMsgPool::new(canuid));
     // register verbs and events
     verbs::register(canapi, &config).expect("verbs register failed");
-    //create_pool_verbs(&mut canapi, jconf, pool).expect("create_pool_verbs failed");
 
     canapi.finalize()
 }
