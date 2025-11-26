@@ -26,11 +26,6 @@
     html_favicon_url = "https://iot.bzh/images/defaults/favicon.ico"
 )]
 
-#[cfg(not(afbv4))]
-extern crate afbv4;
-extern crate sockcan;
-extern crate sockdata;
-
 const MSG_DFT_RATE: u64 = 500;
 const MSG_DFT_WATCHDOG: u64 = 10000;
 

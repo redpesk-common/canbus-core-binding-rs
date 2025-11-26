@@ -10,9 +10,6 @@
     html_logo_url = "https://iot.bzh/images/defaults/company/512-479-max-transp.png",
     html_favicon_url = "https://iot.bzh/images/defaults/favicon.ico"
 )]
-#[cfg(not(afbv4))]
-extern crate afbv4;
-extern crate jsonc;
 
 // import libafb dependencies
 libafb::AfbModImport!();
@@ -36,16 +33,12 @@ impl AfbApiControls for TapUserData {
 
         let dbc_simple = AfbTapTest::new("sockbmc-dbc-simple", "low-can", "dbc/parse")
             .set_info("Parse a simple DBC file")
-            .add_arg(&JsonStr(
-                "{'input':'examples/etc/sample.dbc', 'output':'none'}",
-            ))
+            .add_arg(&JsonStr("{'input':'examples/etc/sample.dbc', 'output':'none'}"))
             .expect("valid json");
 
         let dbc_model3 = AfbTapTest::new("sockbmc-dbc-simple", "low-can", "dbc/parse")
             .set_info("Parse a simple DBC file")
-            .add_arg(&JsonStr(
-                "{'input':'examples/etc/model3can.dbc', 'output':'none'}",
-            ))
+            .add_arg(&JsonStr("{'input':'examples/etc/model3can.dbc', 'output':'none'}"))
             .expect("valid json");
 
         let test_suite = AfbTapSuite::new(api, "sockbmc Apis Test")
@@ -62,7 +55,7 @@ impl AfbApiControls for TapUserData {
             Err(error) => {
                 afb_log_msg!(Critical, api, "Tap test fail to start error={}", error);
                 AFB_FATAL
-            }
+            },
             Ok(_json) => AFB_OK,
         }
     }
@@ -71,27 +64,23 @@ impl AfbApiControls for TapUserData {
         afb_log_msg!(Debug, api, "api={} config={}", api.get_uid(), jconf);
         match jconf.get::<bool>("autostart") {
             Ok(value) => self.autostart = value,
-            Err(_error) => {}
+            Err(_error) => {},
         };
 
         match jconf.get::<bool>("autoexit") {
             Ok(value) => self.autoexit = value,
-            Err(_error) => {}
+            Err(_error) => {},
         };
 
         match jconf.get::<String>("output") {
-            Err(_error) => {}
+            Err(_error) => {},
             Ok(value) => match value.to_uppercase().as_str() {
                 "JSON" => self.output = AfbTapOutput::JSON,
                 "TAP" => self.output = AfbTapOutput::TAP,
                 "NONE" => self.output = AfbTapOutput::NONE,
                 _ => {
-                    afb_log_msg!(
-                        Error,
-                        api,
-                        "Invalid output should be json|tap (default used)"
-                    );
-                }
+                    afb_log_msg!(Error, api, "Invalid output should be json|tap (default used)");
+                },
             },
         };
 
@@ -112,11 +101,7 @@ pub fn binding_test_init(rootv4: AfbApiV4, jconf: JsoncObj) -> i32 {
         Err(_error) => "Tap-test-rootv4".to_owned(),
     };
 
-    let tap_config = TapUserData {
-        autostart: true,
-        autoexit: true,
-        output: AfbTapOutput::TAP,
-    };
+    let tap_config = TapUserData { autostart: true, autoexit: true, output: AfbTapOutput::TAP };
 
     afb_log_msg!(Notice, rootv4, "-- rootv4 {} loaded", uid);
     match AfbApi::new("sockbmc-test")
@@ -129,11 +114,11 @@ pub fn binding_test_init(rootv4: AfbApiV4, jconf: JsoncObj) -> i32 {
         Ok(api) => {
             afb_log_msg!(Notice, rootv4, "Tap test starting uid={}", api.get_uid());
             AFB_OK
-        }
+        },
         Err(error) => {
             afb_log_msg!(Critical, rootv4, "Fail to register api error={}", error);
             AFB_FATAL
-        }
+        },
     }
 }
 

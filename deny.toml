@@ -4,13 +4,6 @@
 [graph]
 exclude-dev = true
 
-# if example crates still show up as "synthesized", exclude them explicitly:
-exclude = [
-    "sockcan_binding",
-    "lib_sockdata",
-    "lib_dbcapi"
-]
-
 [licenses]
 # Everything is denied by default—list what your org allows here.
 allow = [

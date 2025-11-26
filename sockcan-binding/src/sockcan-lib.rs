@@ -26,14 +26,7 @@
     html_favicon_url = "https://iot.bzh/images/defaults/favicon.ico"
 )]
 
-#[cfg(not(afbv4))]
-extern crate afbv4;
-extern crate serde;
-extern crate sockcan;
-extern crate sockdata;
-
-#[path = "./sockcan-verbs.rs"]
-mod verbs;
-
-#[path = "./sockcan-binding.rs"]
 mod binding;
+mod callbacks;
+mod context;
+mod verbs;

@@ -21,34 +21,18 @@
  * $RP_END_LICENSE$
  */
 
-// import libafb dependencies
-use crate::binding::*;
+use crate::context::{AfbClientData, CanEvtCtx, CheckCtx, SessionCtx, SubVerbCtx};
 use afbv4::prelude::*;
 use sockcan::prelude::*;
 use sockdata::prelude::*;
 use std::sync::Arc;
 
-struct AfbClientData {
-    uid: &'static str,
-    sockfd: SockCanHandle,
-    event: &'static AfbEvent,
-    rate: u64,
-    watchdog: u64,
-}
-
-struct CanEvtCtx {
-    client: Arc<AfbClientData>,
-}
-
-AfbSessionRegister!(SessionCtx, session_closing);
-struct SessionCtx {
-    client: Arc<AfbClientData>,
-}
-
-fn session_closing(_session: &mut SessionCtx) {}
-
-// this routine is called when a sockfd got data
-fn async_can_cb(_evtfd: &AfbEvtFd, revent: u32, ctx: &AfbCtxData) -> Result<(), AfbError> {
+// Handler appelé quand le fd CAN a des données
+pub(crate) fn async_can_cb(
+    _evtfd: &AfbEvtFd,
+    revent: u32,
+    ctx: &AfbCtxData,
+) -> Result<(), AfbError> {
     let ctx: &CanEvtCtx = ctx.get_ref::<CanEvtCtx>()?;
     let data = |msg: SockBcmMsg| -> Result<CanBmcData, CanError> {
         Ok(CanBmcData {
@@ -114,14 +98,12 @@ fn async_can_cb(_evtfd: &AfbEvtFd, revent: u32, ctx: &AfbCtxData) -> Result<(), 
     Ok(())
 }
 
-// ============ Register Canids ===============
-struct SubVerbCtx {
-    uid: &'static str,
-    sockevt: &'static str,
-    candev: &'static str,
-}
-
-fn subscribe_cb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Result<(), AfbError> {
+// ============ Subscribe Canids ===============
+pub(crate) fn subscribe_cb(
+    request: &AfbRequest,
+    args: &AfbRqtData,
+    ctx: &AfbCtxData,
+) -> Result<(), AfbError> {
     let ctx = ctx.get_ref::<SubVerbCtx>()?;
     // parse api query
     let param = args.get::<&SubscribeParam>(0)?;
@@ -133,7 +115,7 @@ fn subscribe_cb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Re
     }
 
     // check if we already have a running session
-    let session = match SessionCtx::get(request) {
+    let session = match SessionCtx::get_from(request) {
         Ok(session) => session,
         Err(_) => {
             // open socketcan
@@ -178,7 +160,7 @@ fn subscribe_cb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Re
                 .set_context(CanEvtCtx { client: Arc::clone(&client_data) })
                 .start()?;
 
-            SessionCtx::set(request, SessionCtx { client: Arc::clone(&client_data) })?
+            SessionCtx::set_for(request, SessionCtx { client: Arc::clone(&client_data) })?
         },
     };
 
@@ -220,12 +202,12 @@ fn subscribe_cb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Re
 }
 
 // ============ Unsubscribe Canids ===============
-fn unsubscribe_cb(
+pub(crate) fn unsubscribe_cb(
     request: &AfbRequest,
     args: &AfbRqtData,
     _ctx: &AfbCtxData,
 ) -> Result<(), AfbError> {
-    let session = SessionCtx::get(request)?;
+    let session = SessionCtx::get_from(request)?;
     afb_log_msg!(Notice, request, "unsubscribe from session uid:{}", session.client.uid);
 
     let param = args.get::<&UnSubscribeParam>(0)?;
@@ -264,21 +246,25 @@ fn unsubscribe_cb(
 }
 
 // ============ Close SockBmc ===============
-fn close_cb(request: &AfbRequest, _args: &AfbRqtData, _ctx: &AfbCtxData) -> Result<(), AfbError> {
-    let session = SessionCtx::get(request)?;
+pub(crate) fn close_cb(
+    request: &AfbRequest,
+    _args: &AfbRqtData,
+    _ctx: &AfbCtxData,
+) -> Result<(), AfbError> {
+    let session = SessionCtx::get_from(request)?;
     afb_log_msg!(Notice, request, "closing subscription uid:{}", session.client.uid);
     session.client.event.unref();
     session.client.sockfd.close();
-    let _ = SessionCtx::unref(request);
+    let _ = SessionCtx::unref_from(request);
     Ok(())
 }
 
 // =========== Check SockBmc ===============
-struct CheckCtx {
-    candev: &'static str,
-}
-
-fn check_cb(request: &AfbRequest, _args: &AfbRqtData, ctx: &AfbCtxData) -> Result<(), AfbError> {
+pub(crate) fn check_cb(
+    request: &AfbRequest,
+    _args: &AfbRqtData,
+    ctx: &AfbCtxData,
+) -> Result<(), AfbError> {
     let vbdata: &mut CheckCtx = ctx.get_mut::<CheckCtx>()?;
     // open/close socketcan
     match SockCanHandle::open_bcm(vbdata.candev, CanTimeStamp::CLASSIC) {
@@ -291,41 +277,5 @@ fn check_cb(request: &AfbRequest, _args: &AfbRqtData, ctx: &AfbCtxData) -> Resul
     };
 
     request.reply(AFB_NO_DATA, 0);
-    Ok(())
-}
-
-pub fn register(api: &mut AfbApi, config: &ApiUserData) -> Result<(), AfbError> {
-    let subscribe = AfbVerb::new("subscribe")
-        .set_callback(subscribe_cb)
-        .set_context(SubVerbCtx { uid: config.uid, sockevt: config.sockevt, candev: config.candev })
-        .set_info("Subscribe a canid array")
-        .set_usage("{'canids':[x,y,...,z],['rate':xx_ms],['watchdog':xx_ms],['flag':'ALL|NEW']}")
-        .add_sample("{'canids':[266,257,599],'rate':250,'watchdog':1000,'flag':'ALL'}")?
-        .finalize()?;
-    api.add_verb(subscribe);
-
-    let unsubscribe = AfbVerb::new("unsubscribe")
-        .set_callback(unsubscribe_cb)
-        .set_info("Unsubscribe socket BMC cannids from session")
-        .set_usage("{'canids':[x,y,...,z]}")
-        .add_sample("{'canids':[266,257,599]}")?
-        .finalize()?;
-    api.add_verb(unsubscribe);
-
-    let check = AfbVerb::new("check")
-        .set_callback(check_cb)
-        .set_context(CheckCtx { candev: config.candev })
-        .set_info("Check socket BMC is available")
-        .set_usage("no-input")
-        .finalize()?;
-    api.add_verb(check);
-
-    let close = AfbVerb::new("close")
-        .set_callback(close_cb)
-        .set_info("Close socket BMC session")
-        .set_usage("no-input")
-        .finalize()?;
-    api.add_verb(close);
-
     Ok(())
 }

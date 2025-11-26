@@ -6,7 +6,7 @@
  * License: $RP_BEGIN_LICENSE$ SPDX:MIT https://opensource.org/licenses/MIT $RP_END_LICENSE$
  *
 */
-extern crate dbcparser;
+
 use dbcparser::prelude::*;
 
 fn main() {

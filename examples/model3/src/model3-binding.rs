@@ -26,10 +26,7 @@
     html_favicon_url = "https://iot.bzh/images/defaults/favicon.ico"
 )]
 
-#[cfg(not(afbv4))]
-extern crate afbv4;
 extern crate dbcapi;
-extern crate sockcan;
 
 // include generated dbc message pool
 include!("./__model3-dbcgen.rs");
