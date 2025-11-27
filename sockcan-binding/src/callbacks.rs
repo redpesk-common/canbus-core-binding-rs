@@ -138,7 +138,7 @@ pub(crate) fn subscribe_cb(
                 afb_log_msg!(Warning, request, &error);
                 return Err(error);
             } else {
-                event.finalize().unwrap();
+                event.finalize()?;
             }
             #[allow(clippy::arc_with_non_send_sync)]
             let client_data = Arc::new(AfbClientData {

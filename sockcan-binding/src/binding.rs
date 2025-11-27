@@ -76,18 +76,18 @@ pub fn binding_init(rootv4: AfbApiV4, jconf: JsoncObj) -> Result<&'static AfbApi
     let config = ApiUserData { uid: canuid, sockevt, candev, _canapi: canapi };
 
     // register data converter
-    sockdata_register(rootv4).expect("sockdata_register failed");
+    sockdata_register(rootv4)?;
 
     // create a new api
-    let canapi = AfbApi::new(canuid)
+    let api = AfbApi::new(canuid)
         .set_info(info)
         .set_permission(AfbPermission::new(to_static_str(acls.to_owned())))
         .seal(false);
 
     // register verbs and events
-    verbs::register(canapi, &config).expect("verbs register failed");
+    verbs::register(api, &config)?;
 
-    canapi.finalize()
+    api.finalize()
 }
 
 // register binding within libafb
