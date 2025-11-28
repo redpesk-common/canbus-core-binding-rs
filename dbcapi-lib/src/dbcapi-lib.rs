@@ -36,7 +36,7 @@ use sockcan::prelude::{
     CanDataStatus, CanDbcMessage, CanDbcPool, CanDbcSignal, CanMsgCtrl, CanMsgData, CanSigCtrl,
 };
 
-use sockdata::prelude::{
+use sockdata::types::{
     sockdata_register, CanBmcData, DataBcmMsg, DataBmcSig, SubscribeFlag, SubscribeParam,
     UnSubscribeParam,
 };

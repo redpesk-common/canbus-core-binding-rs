@@ -15,4 +15,4 @@ afbv4= {path= "../../afb-librust/afb-librs"}
 [lib]
 name = "sockdata"
 crate-type = ["lib"]
-path = "src/sockdata-lib.rs"
+path = "src/lib.rs"

@@ -17,4 +17,4 @@ afbv4 = {path= "../../afb-librust/afb-librs"}
 # optional test use:  clear && cargo build --example afb_test
 name = "afb_sockcan"
 crate-type = ["cdylib"]
-path = "src/sockcan-lib.rs"
+path = "src/lib.rs"

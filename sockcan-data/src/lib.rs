@@ -21,10 +21,9 @@
  * $RP_END_LICENSE$
  */
 
-// import libafb dependencies
-use afbv4::prelude::*;
-use sockcan::prelude::*;
+#![doc(
+    html_logo_url = "https://iot.bzh/images/defaults/company/512-479-max-transp.png",
+    html_favicon_url = "https://iot.bzh/images/defaults/favicon.ico"
+)]
 
-pub fn sock2afb(error: CanError) -> AfbError {
-    AfbError::new(error.get_uid().as_str(), 0, error.get_info().as_str())
-}
+pub mod types;

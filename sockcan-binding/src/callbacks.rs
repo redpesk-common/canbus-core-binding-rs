@@ -24,7 +24,7 @@
 use crate::context::{AfbClientData, CanEvtCtx, CheckCtx, SessionCtx, SubVerbCtx};
 use afbv4::prelude::*;
 use sockcan::prelude::*;
-use sockdata::prelude::*;
+use sockdata::types::{CanBmcData, CanBmcError, SubscribeParam, UnSubscribeParam};
 use std::sync::Arc;
 
 // Handler appelé quand le fd CAN a des données

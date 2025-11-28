@@ -8,7 +8,7 @@
  *  accordance with the commercial license agreement provided with the
  *  Software or, alternatively, in accordance with the terms contained in
  *  a written agreement between you and The IoT.bzh Company. For licensing terms
- *  and conditions see https://www.iot.bzh/terms-conditions. For further
+ *  and conditsockdata_registerions see https://www.iot.bzh/terms-conditions. For further
  *  information use the contact form at https://www.iot.bzh/contact.
  *
  * GNU General Public License Usage
@@ -23,7 +23,7 @@
 
 use crate::*;
 use afbv4::prelude::*;
-use sockdata::prelude::*;
+use sockdata::types::sockdata_register;
 
 pub struct ApiUserData {
     pub uid: &'static str,
