@@ -1,5 +1,5 @@
 [package]
-name = "lib_dbcapi"
+name = "dbcapi"
 authors = ["fulup@iot.bzh"]
 version = "0.1.0"
 edition = "2021"
@@ -9,11 +9,11 @@ license.workspace = true
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1"}
-lib_sockdata = {path="../sockcan-data"}
+sockcan_data = {path="../sockcan-data"}
 lib_sockcan= {path= "../../canbus-core-rs/sockcan"}
 afbv4= {path= "../../afb-librust/afb-librs"}
 
 [lib]
 name = "dbcapi"
 crate-type = ["lib"]
-path = "src/dbcapi-lib.rs"
+path = "src/lib.rs"

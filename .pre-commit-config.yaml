@@ -5,9 +5,12 @@ repos:
     rev: v4.6.0
     hooks:
       - id: trailing-whitespace
+        exclude: ^samples/.*/(dbc|candump)/.*\.(dbc|log)$
       - id: end-of-file-fixer
+        exclude: ^samples/.*/(dbc|candump)/.*\.(dbc|log)$
       - id: mixed-line-ending
         args: [--fix=lf]
+        exclude: ^samples/.*/(dbc|candump)/.*\.(dbc|log)$
       - id: check-merge-conflict
 
   - repo: local

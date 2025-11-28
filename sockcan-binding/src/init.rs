@@ -23,65 +23,24 @@
 
 use crate::*;
 use afbv4::prelude::*;
+use sockdata::types::parse_sockcan_config;
 use sockdata::types::sockdata_register;
-
-pub struct ApiUserData {
-    pub uid: &'static str,
-    pub sockevt: &'static str,
-    pub _canapi: &'static str,
-    pub candev: &'static str,
-}
-
-impl AfbApiControls for ApiUserData {
-    fn config(&mut self, api: &AfbApi, jconf: JsoncObj) -> Result<(), AfbError> {
-        afb_log_msg!(Debug, api, "api={} config={}", api.get_uid(), jconf);
-
-        Ok(())
-    }
-
-    // mandatory for downcasting back to custom api data object
-    fn as_any(&mut self) -> &mut dyn Any {
-        self
-    }
-}
 
 // Binding init callback started at binding load time before any API exist
 // -----------------------------------------
 pub fn binding_init(rootv4: AfbApiV4, jconf: JsoncObj) -> Result<&'static AfbApi, AfbError> {
     afb_log_msg!(Info, rootv4, "config:{}", jconf);
 
-    let candev =
-        if let Ok(value) = jconf.get::<String>("dev") { to_static_str(value) } else { "vcan0" };
-
-    let canuid =
-        if let Ok(value) = jconf.get::<String>("uid") { to_static_str(value) } else { "sockcan" };
-
-    let canapi =
-        if let Ok(value) = jconf.get::<String>("sock_api") { to_static_str(value) } else { canuid };
-
-    let info = if let Ok(value) = jconf.get::<String>("info") { to_static_str(value) } else { "" };
-
-    let sockevt = if let Ok(value) = jconf.get::<String>("sockevt") {
-        to_static_str(value)
-    } else {
-        "sockbmc"
-    };
-
-    let acls = if let Ok(value) = jconf.get::<String>("acls") {
-        to_static_str(value)
-    } else {
-        "acl:sockcan"
-    };
-
-    let config = ApiUserData { uid: canuid, sockevt, candev, _canapi: canapi };
+    // parse all config fields from JSON into a single struct
+    let config = parse_sockcan_config(&jconf);
 
     // register data converter
     sockdata_register(rootv4)?;
 
     // create a new api
-    let api = AfbApi::new(canuid)
-        .set_info(info)
-        .set_permission(AfbPermission::new(to_static_str(acls.to_owned())))
+    let api = AfbApi::new(config.api_uid)
+        .set_info(config.info)
+        .set_permission(AfbPermission::new(to_static_str(config.acls.to_owned())))
         .seal(false);
 
     // register verbs and events

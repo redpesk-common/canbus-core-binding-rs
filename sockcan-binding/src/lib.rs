@@ -26,7 +26,7 @@
     html_favicon_url = "https://iot.bzh/images/defaults/favicon.ico"
 )]
 
-mod binding;
 mod callbacks;
-mod context;
+pub mod context;
+mod init;
 mod verbs;

@@ -4,7 +4,7 @@ resolver = "2"
 members = [
     "sockcan-data",
     "sockcan-binding",
-    "dbcapi-lib",
+    "dbcapi",
     "examples/model3",
     "examples/bms",
 ]

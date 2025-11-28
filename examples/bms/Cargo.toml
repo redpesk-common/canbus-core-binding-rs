@@ -11,13 +11,14 @@ serde = { version = "1", features = ["derive"], optional = true  }
 serde_json = {version= "1", optional = true }
 bitvec = { version = "1.0", default-features = false }
 bitflags = { version = "2"}
-lib_sockdata= {path ="../../sockcan-data"}
-lib_dbcapi= {path ="../../dbcapi-lib"}
-lib_sockcan= {path= "../../../canbus-core-rs/sockcan"}
-afbv4= {path= "../../../afb-librust/afb-librs"}
+sockcan_binding = { path = "../../sockcan-binding" }
+sockcan_data    = { path ="../../sockcan-data" }
+dbcapi          = { path ="../../dbcapi" }
+lib_sockcan     = { path ="../../../canbus-core-rs/sockcan" }
+afbv4           = { path ="../../../afb-librust/afb-librs" }
 
 [build-dependencies]
-dbcparser= {path= "../../../canforge-rs/dbcparser"}
+dbcparser = { path= "../../../canforge-rs/dbcparser"}
 
 [lib]
 name = "afb_bms"

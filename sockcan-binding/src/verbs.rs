@@ -21,17 +21,21 @@
  * $RP_END_LICENSE$
  */
 
-use crate::binding::ApiUserData;
 use crate::callbacks::{check_cb, close_cb, subscribe_cb, unsubscribe_cb};
 use crate::context::{CheckCtx, SubVerbCtx};
 use afbv4::prelude::*;
+use sockdata::types::SockcanBindingConfig;
 
 // ============ Register Canids ===============
 
-pub fn register(api: &mut AfbApi, config: &ApiUserData) -> Result<(), AfbError> {
+pub fn register(api: &mut AfbApi, config: &SockcanBindingConfig) -> Result<(), AfbError> {
     let subscribe = AfbVerb::new("subscribe")
         .set_callback(subscribe_cb)
-        .set_context(SubVerbCtx { uid: config.uid, sockevt: config.sockevt, candev: config.candev })
+        .set_context(SubVerbCtx {
+            uid: config.api_uid,
+            sockevt: config.event_uid,
+            candev: config.can_device,
+        })
         .set_info("Subscribe a canid array")
         .set_usage("{'canids':[x,y,...,z],['rate':xx_ms],['watchdog':xx_ms],['flag':'ALL|NEW']}")
         .add_sample("{'canids':[266,257,599],'rate':250,'watchdog':1000,'flag':'ALL'}")?
@@ -48,7 +52,7 @@ pub fn register(api: &mut AfbApi, config: &ApiUserData) -> Result<(), AfbError> 
 
     let check = AfbVerb::new("check")
         .set_callback(check_cb)
-        .set_context(CheckCtx { candev: config.candev })
+        .set_context(CheckCtx { candev: config.can_device })
         .set_info("Check socket BMC is available")
         .set_usage("no-input")
         .finalize()?;

@@ -1,5 +1,5 @@
 {
-  "name": "afb-sockcan",
+  "name": "afb-canbus",
   "no-ldpaths": true,
   "port": 1234,
   "alias": [
@@ -8,12 +8,11 @@
   "monitoring": true,
   "binding": [
     {
-      "uid": "sockcan-api",
+      "uid": "sockbmc",
       "path": "${CARGO_TARGET_DIR}/debug/libafb_sockcan.so",
-      "info": "sockcan hardware abstraction",
-      "dev": "vcan0",
-      "api": "sockcan",
-      "acls": "acl:vcan"
+      "info": "RUST sockbmc/can APIs",
+      "sock_api": "sockcan",
+      "sock_evt": "sockbmc"
     }
   ]
 }

@@ -154,3 +154,44 @@ pub fn sockdata_register(_root: AfbApiV4) -> Result<(), AfbError> {
     unsubscribe_param::register()?;
     Ok(())
 }
+
+/// Static configuration for the sockcan binding,
+/// parsed once from the JSON binding config.
+pub struct SockcanBindingConfig {
+    pub api_uid: &'static str,
+    pub event_uid: &'static str,
+    pub can_device: &'static str,
+    pub sock_api: &'static str,
+    pub info: &'static str,
+    pub acls: &'static str,
+}
+
+pub fn parse_sockcan_config(jconf: &JsoncObj) -> SockcanBindingConfig {
+    let can_device =
+        if let Ok(value) = jconf.get::<String>("dev") { to_static_str(value) } else { "vcan0" };
+
+    let api_uid =
+        if let Ok(value) = jconf.get::<String>("uid") { to_static_str(value) } else { "sockcan" };
+
+    let sock_api = if let Ok(value) = jconf.get::<String>("sock_api") {
+        to_static_str(value)
+    } else {
+        api_uid
+    };
+
+    let info = if let Ok(value) = jconf.get::<String>("info") { to_static_str(value) } else { "" };
+
+    let event_uid = if let Ok(value) = jconf.get::<String>("event_uid") {
+        to_static_str(value)
+    } else {
+        "sockbmc"
+    };
+
+    let acls = if let Ok(value) = jconf.get::<String>("acls") {
+        to_static_str(value)
+    } else {
+        "acl:sockcan"
+    };
+
+    SockcanBindingConfig { api_uid, event_uid, can_device, sock_api, info, acls }
+}
