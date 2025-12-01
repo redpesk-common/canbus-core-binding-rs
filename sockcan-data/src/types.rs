@@ -24,7 +24,8 @@
 // import libafb dependencies
 use afbv4::prelude::*;
 use serde::{Deserialize, Serialize};
-use sockcan::prelude::*;
+
+use sockcan::prelude::{CanBcmOpCode, CanDataStatus, CanDbcType};
 
 // automatically generate json encoder/decoder for MySimpleData
 AfbDataConverter!(bmc_error, CanBmcError);

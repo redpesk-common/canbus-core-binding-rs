@@ -22,7 +22,7 @@
  */
 
 use afbv4::prelude::*;
-use sockcan::prelude::*;
+use sockcan::prelude::SockCanHandle;
 use std::sync::Arc;
 
 // Data associée à un client CAN (session + event)
