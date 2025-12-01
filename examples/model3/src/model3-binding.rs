@@ -26,14 +26,12 @@
     html_favicon_url = "https://iot.bzh/images/defaults/favicon.ico"
 )]
 
-extern crate dbcapi;
-
 // include generated dbc message pool
 include!("./__model3-dbcgen.rs");
 use crate::DbcModel3::*;
 
-use crate::dbcapi::create_pool_verbs;
 use afbv4::prelude::*;
+use dbcapi::create_pool_verbs;
 use sockdata::types::parse_sockcan_config;
 
 // Binding init callback started at binding load time before any API exist
