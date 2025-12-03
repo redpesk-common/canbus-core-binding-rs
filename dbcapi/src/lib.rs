@@ -735,7 +735,7 @@ pub fn create_pool_verbs(
     pool_box: Box<dyn CanDbcPool>,
 ) -> Result<(), AfbError> {
     // Register data converters for sockdata <-> afb types.
-    sockdata_register(api_root).expect("sockdata_register failed");
+    sockdata_register(api_root)?;
 
     // Read from `args` subobject if present, otherwise fall back to the root object (compat).
     let conf = match jconf.get::<JsoncObj>("args") {

@@ -49,7 +49,7 @@ pub fn binding_init(rootv4: AfbApiV4, jconf: JsoncObj) -> Result<&'static AfbApi
 
     // open dbc can message pool and create one verb per message/signal
     let pool = Box::new(CanMsgPool::new(config.api_uid));
-    create_pool_verbs(rootv4, can_api, jconf, pool).expect("create_pool_verbs failed");
+    create_pool_verbs(rootv4, can_api, jconf, pool)?;
 
     can_api.finalize()
 }

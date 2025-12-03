@@ -10,7 +10,7 @@
 use dbcparser::gencode::DbcParser;
 use dbcparser::gencode::DEFAULT_HEADER;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Déclare "afbv4" comme cfg connu → plus de warning
     println!("cargo::rustc-check-cfg=cfg(afbv4)");
 
@@ -19,7 +19,7 @@ fn main() {
         println!("cargo:rustc-cfg=afbv4");
     }
 
-    let dbc_infile = "../../samples/model3/dbc/model3can.dbc";
+    let dbc_infile = "../samples/model3/dbc/model3can.dbc";
 
     // generate parser outside of project git repo
     let dbc_outfile = "./src/__model3-dbcgen.rs";
@@ -34,6 +34,6 @@ fn main() {
         .range_check(true)
         .serde_json(true)
         .whitelist(vec![280, 599, 614]) // restrict generated code size to candump.log messages
-        .generate()
-        .expect("Fail to parse dbc-file'\n");
+        .generate()?;
+    Ok(())
 }
