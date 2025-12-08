@@ -21,38 +21,68 @@
  * $RP_END_LICENSE$
  */
 
+//! Model 3 CAN DBC binding for libafb/redpesk.
+//!
+//! This binding:
+//! - loads configuration from JSON (sockcan/bus parameters, ACLs, API name),
+//! - instantiates a DBC-generated message pool for the Model 3 CAN network,
+//! - exposes verbs/events for CAN messages and signals via `create_pool_verbs`,
+//! - registers a `binding_init` entry point used by libafb at load time.
 #![doc(
     html_logo_url = "https://iot.bzh/images/defaults/company/512-479-max-transp.png",
     html_favicon_url = "https://iot.bzh/images/defaults/favicon.ico"
 )]
 
+use afbv4::prelude::*;
+// Import helper that creates verbs/events from a DBC pool.
+use dbcapi::create_pool_verbs;
+// Import parser for the JSON configuration describing sockcan and API parameters.
+use sockdata::types::parse_sockcan_config;
+
+// Include generated DBC message pool for the Tesla Model 3.
 // include generated dbc message pool
 include!("./__model3-dbcgen.rs");
 use crate::DbcModel3::*;
 
-use afbv4::prelude::*;
-use dbcapi::create_pool_verbs;
-use sockdata::types::parse_sockcan_config;
-
-// Binding init callback started at binding load time before any API exist
-// -----------------------------------------
+/// Binding entry point.
+/// Runs when the shared object is loaded; create and register the API here.
+///
+/// Order matters:
+/// 1) Build the API descriptor and declare dependencies
+/// 2) **Finalize** to obtain a valid apiv4 handle (non-NULL)
+/// 3) Register verbs/events using the finalized handle
+/// 4) Return the finalized API handle to libafb
 pub fn binding_init(rootv4: AfbApiV4, jconf: JsoncObj) -> Result<&'static AfbApi, AfbError> {
+    // Log raw configuration for traceability; be careful with potential sensitive data
+    // (ACLs, bus names, credentials) and ensure log level is appropriate.
     afb_log_msg!(Info, rootv4, "config:{}", jconf);
 
+    // Parse and validate JSON configuration into a strongly-typed structure.
     let config = parse_sockcan_config(&jconf);
 
     // create a new api
+    // Create and configure the public API:
+    // - set API identifier and human-readable info,
+    // - attach permission/ACL information,
+    // - keep the API unsealed while verbs/events are being added.
     let can_api = AfbApi::new(config.api_uid)
         .set_info(config.info)
         .set_permission(AfbPermission::new(to_static_str(config.acls.to_owned())))
-        .seal(false);
+        .seal(false)
+        .require_api(config.sock_api);
 
-    // open dbc can message pool and create one verb per message/signal
+    // Instantiate the DBC message pool for the Model 3 CAN network,
+    // and register verbs/events for each message/signal defined in the DBC.
     let pool = Box::new(CanMsgPool::new(config.api_uid));
-    create_pool_verbs(rootv4, can_api, jconf, pool)?;
 
+    // Create verbs and events from the DBC pool and register them on the API.
+    create_pool_verbs(rootv4, can_api, jconf, pool)?;
+    // Finalize the API so it becomes visible/usable by clients.
+    // After this call the API descriptor is no longer mutable.
     can_api.finalize()
 }
 
+// Register the binding entry point with libafb.
+// libafb will call `binding_init` during module load to initialize the API.
 // register binding within libafb
 AfbBindingRegister!(binding_init);

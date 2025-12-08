@@ -28,7 +28,28 @@ use sockdata::types::SockcanBindingConfig;
 
 // ============ Register Canids ===============
 
+/// Register all verbs exposed by this CAN binding on the given API.
+///
+/// This function wires the high-level verbs to their concrete callbacks and
+/// attaches verb-specific context:
+/// - `subscribe`: create/attach a BCM session and install RX filters for CAN IDs,
+/// - `unsubscribe`: remove BCM filters for CAN IDs on the current session,
+/// - `check`: health-check that BCM is available on the target CAN device,
+/// - `close`: explicitly close the BCM session and release related resources.
+///
+/// The `config` parameter provides binding-level configuration:
+/// - `api_uid`: logical API identifier,
+/// - `event_uid`: event name used for BCM notifications,
+/// - `can_device`: CAN interface name (e.g. "can0").
+///
 pub fn register(api: &mut AfbApi, config: &SockcanBindingConfig) -> Result<(), AfbError> {
+    // Verb: subscribe
+    //
+    // Subscribes the caller to a set of CAN IDs via BCM, using optional
+    // rate/watchdog/flag parameters to control timers and notification policy.
+    //
+    // Usage and samples are expressed as JSON-like strings; the underlying framework
+    // uses them for introspection and API documentation.
     let subscribe = AfbVerb::new("subscribe")
         .set_callback(subscribe_cb)
         .set_context(SubVerbCtx {
@@ -42,6 +63,10 @@ pub fn register(api: &mut AfbApi, config: &SockcanBindingConfig) -> Result<(), A
         .finalize()?;
     api.add_verb(subscribe);
 
+    // Verb: unsubscribe
+    //
+    // Unsubscribes the caller from BCM notifications for the given CAN IDs
+    // on the current session.
     let unsubscribe = AfbVerb::new("unsubscribe")
         .set_callback(unsubscribe_cb)
         .set_info("Unsubscribe socket BMC cannids from session")
@@ -50,6 +75,10 @@ pub fn register(api: &mut AfbApi, config: &SockcanBindingConfig) -> Result<(), A
         .finalize()?;
     api.add_verb(unsubscribe);
 
+    // Verb: check
+    //
+    // Performs a health check to ensure that a BCM socket can be opened on
+    // the configured CAN device. It does not change any persistent state.
     let check = AfbVerb::new("check")
         .set_callback(check_cb)
         .set_context(CheckCtx { candev: config.can_device })
@@ -58,6 +87,10 @@ pub fn register(api: &mut AfbApi, config: &SockcanBindingConfig) -> Result<(), A
         .finalize()?;
     api.add_verb(check);
 
+    // Verb: close
+    //
+    // Explicitly closes the BCM session associated with the current request/session,
+    // unreferences the AFB event and closes the underlying socket.
     let close = AfbVerb::new("close")
         .set_callback(close_cb)
         .set_info("Close socket BMC session")

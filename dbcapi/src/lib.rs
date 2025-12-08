@@ -26,6 +26,7 @@
     html_favicon_url = "https://iot.bzh/images/defaults/favicon.ico"
 )]
 
+// TODO: explain – clarify units for rate/watchdog (milliseconds vs microseconds) and rationale behind default values.
 const MSG_DFT_RATE: u64 = 500;
 const MSG_DFT_WATCHDOG: u64 = 10000;
 
@@ -45,6 +46,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 #[allow(clippy::upper_case_acronyms)]
+/// High-level control actions exposed through the DBC verbs.
 enum Action {
     SUBSCRIBE,
     UNSUBSCRIBE,
@@ -53,6 +55,10 @@ enum Action {
 }
 
 /// Runtime info associated with a pool of signals/messages.
+///
+/// NOTE:
+/// - `rate` and `watchdog` are interpreted as time-based thresholds but units are implicit.
+/// - `listeners` tracks the number of active subscribers for the associated event.
 struct PoolInfoCtx {
     stamp: u64,
     rate: u64,
@@ -62,12 +68,18 @@ struct PoolInfoCtx {
 }
 
 /// Per-signal runtime data (throttle, watchdog, subscribers, event handle).
+///
+/// This structure is shared between the signal pool controller and the verb
+/// handlers to coordinate throttling and subscription state.
 struct SigDataCtx {
     info: RefCell<PoolInfoCtx>,
     event: &'static AfbEvent,
 }
 
 /// Controller passed to the DBC signal to push notifications into AFB events.
+///
+/// This controller is attached per signal and enforces throttling rules
+/// (`rate` / `watchdog`) when forwarding updates to the AFB event bus.
 struct SigPoolCtx {
     data: Rc<SigDataCtx>,
 }
@@ -86,15 +98,15 @@ impl CanSigCtrl for SigPoolCtx {
             },
             Ok(info) => info,
         };
-
+        // Build a snapshot of the signal for publication on the event bus.
         let signal = DataBmcSig {
             name: sig.get_name().to_owned(),
             status: sig.get_status(),
             stamp: sig.get_stamp(),
             value: sig.get_value(),
         };
-
         // Push event depending on update status and throttling policy, update listeners count.
+        // `rate` and `watchdog` are scaled by 1000, but the underlying time unit is not explicitly documented.
         match sig.get_status() {
             CanDataStatus::Updated => {
                 if (sig.get_stamp() - info.stamp) > info.rate * 1000 {
@@ -117,6 +129,9 @@ impl CanSigCtrl for SigPoolCtx {
 }
 
 /// Verb callback context for a single signal.
+///
+/// This bundles the underlying DBC signal and message handles with the
+/// shared runtime context and AFB event handle used by the verbs.
 struct SigVerbCtx {
     sig_rfc: Rc<RefCell<Box<dyn CanDbcSignal>>>,
     msg_rfc: Rc<RefCell<Box<dyn CanDbcMessage>>>,
@@ -125,6 +140,13 @@ struct SigVerbCtx {
 }
 
 /// Verb for signal operations: subscribe/unsubscribe/read/reset.
+///
+/// The verb expects a JSON object with at least:
+/// - `"action"`: one of SUBSCRIBE | UNSUBSCRIBE | READ | RESET (case-insensitive),
+///   and optionally:
+/// - `"rate"` / `"watchdog"`: overriding throttling thresholds,
+/// - `"flag"`: "NEW" or "ALL" for event publication policy.
+///
 fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Result<(), AfbError> {
     let ctx = ctx.get_ref::<SigVerbCtx>()?;
     let jquery = args.get::<JsoncObj>(0)?;
@@ -249,6 +271,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
         },
 
         Action::UNSUBSCRIBE => {
+            // Detach the requester from the signal's event stream.
             ctx.data.event.unsubscribe(request)?;
             request.reply(
                 format!("UnSubscribe (canid:{}) sig:{} OK", msg.get_id(), sig.get_name(),),
@@ -257,7 +280,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
         },
 
         Action::READ => {
-            // Return current signal snapshot.
+            // Return the current signal snapshot to the requester.
             let sig_data = DataBmcSig {
                 name: sig.get_name().to_owned(),
                 stamp: sig.get_stamp(),
@@ -270,6 +293,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
         },
 
         Action::RESET => {
+            // Reset signal runtime state in the DBC pool.
             sig.reset();
             request.reply(format!("Reset (canid:{}) sig:{} OK", msg.get_id(), sig.get_name(),), 0);
         },
@@ -277,6 +301,12 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
     Ok(())
 }
 
+/// Register a single signal:
+/// - creates an AFB event bound to the signal name,
+/// - installs a `CanSigCtrl` callback to push updates into the event,
+/// - exposes a verb to control subscription and read/reset operations.
+///
+/// Returns the verb and event handles used by the API.
 fn register_signal(
     _config: &SockBmcConfig,
     msg_ctx: &Rc<MessageDataCtx>,
@@ -728,6 +758,10 @@ fn bmc_event_cb(event: &AfbEventMsg, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
 }
 
 /// Create verbs/events/groups from the DBC pool and hook backend events.
+///
+/// This wires:
+/// - verbs per signal and per message,
+/// - a backend event handler that receives raw BMC frames and updates the pool.
 pub fn create_pool_verbs(
     api_root: AfbApiV4,
     api: &mut afbv4::apiv4::AfbApi,
@@ -785,7 +819,7 @@ pub fn create_pool_verbs(
                 "create_pool_verbs: register_msg FAILED at idx={} canid={} name={} -> {:?}",
                 idx, canid, name, err
             );
-            // on renvoie l'erreur pour voir si c'est ça qui coupe la boucle
+            // We return the error to see if this is what breaks the loop.
             return Err(err);
         }
     }

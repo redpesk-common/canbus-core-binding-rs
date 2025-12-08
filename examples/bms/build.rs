@@ -7,21 +7,28 @@
  *
 */
 
+// Build script to generate Rust bindings DBC file using `dbcparser`.
+// It configures an optional `afbv4` cfg flag and emits a generated source file under `src/`.
+
+// Import the code generator entry points used to transform a DBC file into Rust structures.
 use dbcparser::gencode::DbcParser;
 use dbcparser::gencode::DEFAULT_HEADER;
 
+// Build script configuring a conditional compilation flag for the `afbv4` feature.
+//
+// This script:
+// - declares the custom `afbv4` cfg so the compiler accepts it,
+// - enables the `afbv4` configuration when the `AFBV4` environment variable is set.
+// - generates Rust code from a DBC file using the `dbcparser` crate.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Déclare "afbv4" comme cfg connu → plus de warning
+    // Inform rustc that `cfg(afbv4)` is a valid configuration key to avoid unknown cfg warnings.
     println!("cargo::rustc-check-cfg=cfg(afbv4)");
 
-    // (facultatif) active réellement le cfg si AFBV4=1
+    // When the `AFBV4` environment variable is present, propagate a cfg flag to the crate
+    // so that code can use `#[cfg(afbv4)]` sections.
     if std::env::var("AFBV4").is_ok() {
         println!("cargo:rustc-cfg=afbv4");
     }
-
-    // let dir = concat!(env!("CARGO_TARGET_DIR", "debug"));
-    // println!("cargo:rustc-link-search={}", dir);
-    // println!("cargo:rustc-link-lib=liblibafb");
 
     let dbc_infile = "../samples/bms/dbc/BMS.dbc";
 

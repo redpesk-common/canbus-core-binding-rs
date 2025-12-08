@@ -26,28 +26,55 @@ use afbv4::prelude::*;
 use sockdata::types::parse_sockcan_config;
 use sockdata::types::sockdata_register;
 
-// Binding init callback started at binding load time before any API exist
-// -----------------------------------------
+/// Binding initialization callback invoked when the shared object is loaded by libafb.
+///
+/// Responsibilities:
+/// - log and parse the JSON configuration object,
+/// - register data converters (sockdata) with the AFB root API,
+/// - create the CAN-related API (name, permissions, metadata),
+/// - register verbs and events using the parsed configuration,
+/// - finalize and return a `'static` reference to the API.
+///
+/// The `rootv4` handle represents the root AFB API context used to register
+/// new APIs and global resources.
 pub fn binding_init(rootv4: AfbApiV4, jconf: JsoncObj) -> Result<&'static AfbApi, AfbError> {
+    // Log the raw configuration for traceability and debugging.
     afb_log_msg!(Info, rootv4, "config:{}", jconf);
 
-    // parse all config fields from JSON into a single struct
+    // Parse all configuration fields from JSON into a strongly-typed configuration structure.
     let config = parse_sockcan_config(&jconf);
 
-    // register data converter
+    // Register data converters (sockdata) with the AFB root context so that CAN-related
+    // payloads can be automatically mapped between wire representation and Rust structs.
     sockdata_register(rootv4)?;
 
-    // create a new api
+    // Create a new AFB API instance for this binding:
+    // - `api_uid` controls the public API name,
+    // - `info` is a human-readable description,
+    // - `acls` defines permission requirements for calling this API.
+    //
+    // `seal(false)` keeps the API mutable so verbs and events can still be registered
+    // before finalization.
     let api = AfbApi::new(config.api_uid)
         .set_info(config.info)
         .set_permission(AfbPermission::new(to_static_str(config.acls.to_owned())))
         .seal(false);
 
-    // register verbs and events
+    // Register all verbs and events associated with this binding using the parsed configuration.
+    // The `verbs::register` helper is responsible for:
+    // - creating verb handlers for subscription, control, diagnostics, etc.,
+    // - wiring CAN and DBC-related events,
+    // - attaching any necessary per-verb context.
+    // It receives the API instance and the configuration structure.
     verbs::register(api, &config)?;
 
+    // Finalize the API so it becomes visible/usable to clients.
+    // After this call, the API descriptor is no longer mutable.
     api.finalize()
 }
 
-// register binding within libafb
+// Register the binding entry point with libafb.
+//
+// This macro exposes `binding_init` as the symbol that libafb looks up and calls
+// when loading this shared object as a binding plugin.
 AfbBindingRegister!(binding_init);

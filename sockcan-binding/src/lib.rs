@@ -26,6 +26,14 @@
     html_favicon_url = "https://iot.bzh/images/defaults/favicon.ico"
 )]
 
+/// Core CAN binding crate for libafb/redpesk.
+///
+/// This crate:
+/// - exposes the public `context` module (session/client types),
+/// - implements the binding initialization logic (`init`),
+/// - defines verbs and their callbacks (`verbs`, `callbacks`) to manage CAN BCM
+///   subscriptions and related operations.
+/// - depends on the `afb-sys` crate for low-level AFB bindings.
 mod callbacks;
 pub mod context;
 mod init;

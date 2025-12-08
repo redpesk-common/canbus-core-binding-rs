@@ -1,8 +1,9 @@
+// Build script configuring conditional compilation flags for afbv4 integration.
 fn main() {
-    // Déclare "afbv4" comme cfg connu → plus de warning
+    // Instruct Cargo to accept the custom `afbv4` cfg so that unknown cfg warnings are avoided.
     println!("cargo::rustc-check-cfg=cfg(afbv4)");
 
-    // (facultatif) active réellement le cfg si AFBV4=1
+    // Propagate the `afbv4` cfg flag to the crate when the AFBV4 environment variable is present.
     if std::env::var("AFBV4").is_ok() {
         println!("cargo:rustc-cfg=afbv4");
     }
