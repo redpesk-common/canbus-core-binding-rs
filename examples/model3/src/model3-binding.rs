@@ -42,7 +42,7 @@ use sockdata::types::parse_sockcan_config;
 // Include generated DBC message pool for the Tesla Model 3.
 // include generated dbc message pool
 include!("./__model3-dbcgen.rs");
-use crate::DbcModel3::*;
+use crate::DbcModel3::CanMsgPool;
 
 /// Binding entry point.
 /// Runs when the shared object is loaded; create and register the API here.
