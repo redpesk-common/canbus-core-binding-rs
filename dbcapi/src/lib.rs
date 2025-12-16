@@ -45,15 +45,6 @@ use sockdata::types::{
 use std::cell::RefCell;
 use std::rc::Rc;
 
-#[allow(clippy::upper_case_acronyms)]
-/// High-level control actions exposed through the DBC verbs.
-enum Action {
-    SUBSCRIBE,
-    UNSUBSCRIBE,
-    READ,
-    RESET,
-}
-
 /// Runtime info associated with a pool of signals/messages.
 ///
 /// NOTE:
@@ -107,24 +98,21 @@ impl CanSigCtrl for SigPoolCtx {
         };
         // Push event depending on update status and throttling policy, update listeners count.
         // `rate` and `watchdog` are scaled by 1000, but the underlying time unit is not explicitly documented.
-        match sig.get_status() {
-            CanDataStatus::Updated => {
-                if (sig.get_stamp() - info.stamp) > info.rate * 1000 {
-                    info.stamp = sig.get_stamp();
-                    info.listeners = self.data.event.push(signal);
-                };
-                info.listeners
-            },
-            _ => {
-                if (sig.get_stamp() - info.stamp) > info.watchdog * 1000
-                    && info.flag == SubscribeFlag::ALL
-                {
-                    info.stamp = sig.get_stamp();
-                    info.listeners = self.data.event.push(signal);
-                };
-                info.listeners
-            },
+        let now = sig.get_stamp();
+
+        if logic::should_emit(
+            sig.get_status(),
+            now,
+            info.stamp,
+            info.rate,
+            info.watchdog,
+            info.flag.clone(),
+        ) {
+            info.stamp = now;
+            info.listeners = self.data.event.push(signal);
         }
+
+        info.listeners
     }
 }
 
@@ -151,18 +139,14 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
     let ctx = ctx.get_ref::<SigVerbCtx>()?;
     let jquery = args.get::<JsoncObj>(0)?;
     let jaction = jquery.get::<String>("action")?;
-    let action = match jaction.to_uppercase().as_str() {
-        "SUBSCRIBE" => Action::SUBSCRIBE,
-        "UNSUBSCRIBE" => Action::UNSUBSCRIBE,
-        "READ" => Action::READ,
-        "RESET" => Action::RESET,
-        _ => {
+    let action = match logic::parse_action(&jaction) {
+        Some(action) => action,
+        None => {
             let error =
                 AfbError::new("invalid-action", 0, "expect: SUBSCRIBE|UNSUBSCRIBE|READ|RESET");
             return Err(error);
         },
     };
-
     // Borrow underlying signal/message instances and pool infos.
     let mut sig = match ctx.sig_rfc.try_borrow_mut() {
         Ok(value) => value,
@@ -213,7 +197,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
     };
 
     match action {
-        Action::SUBSCRIBE => {
+        logic::Action::Subscribe => {
             // Subscribe the requester to the signal's event stream.
             ctx.data.event.subscribe(request)?;
             let rate = jquery.get::<u64>("rate").unwrap_or(msg_info.rate);
@@ -221,11 +205,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
             let flag = jquery
                 .get::<String>("flag")
                 .ok()
-                .and_then(|v| match v.to_uppercase().as_str() {
-                    "NEW" => Some(SubscribeFlag::NEW),
-                    "ALL" => Some(SubscribeFlag::ALL),
-                    _ => None,
-                })
+                .and_then(|v| logic::parse_subscribe_flag(&v))
                 .unwrap_or_else(|| msg_info.flag.clone());
 
             // Update signal throttling if tighter.
@@ -270,7 +250,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
                 .reply(format!("Subscribe (canid:{}) sig:{} OK", msg.get_id(), sig.get_name(),), 0);
         },
 
-        Action::UNSUBSCRIBE => {
+        logic::Action::Unsubscribe => {
             // Detach the requester from the signal's event stream.
             ctx.data.event.unsubscribe(request)?;
             request.reply(
@@ -279,7 +259,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
             );
         },
 
-        Action::READ => {
+        logic::Action::Read => {
             // Return the current signal snapshot to the requester.
             let sig_data = DataBmcSig {
                 name: sig.get_name().to_owned(),
@@ -292,7 +272,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
             request.reply(params, 0);
         },
 
-        Action::RESET => {
+        logic::Action::Reset => {
             // Reset signal runtime state in the DBC pool.
             sig.reset();
             request.reply(format!("Reset (canid:{}) sig:{} OK", msg.get_id(), sig.get_name(),), 0);
@@ -483,10 +463,10 @@ fn message_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
     let jquery = args.get::<JsoncObj>(0)?;
     let jaction = jquery.get::<String>("action")?;
     let action = match jaction.to_uppercase().as_str() {
-        "SUBSCRIBE" => Action::SUBSCRIBE,
-        "UNSUBSCRIBE" => Action::UNSUBSCRIBE,
-        "READ" => Action::READ,
-        "RESET" => Action::RESET,
+        "SUBSCRIBE" => logic::Action::Subscribe,
+        "UNSUBSCRIBE" => logic::Action::Unsubscribe,
+        "READ" => logic::Action::Read,
+        "RESET" => logic::Action::Reset,
         _ => {
             let error =
                 AfbError::new("invalid-action", 0, "expect: SUBSCRIBE|UNSUBSCRIBE|READ|RESET");
@@ -517,7 +497,7 @@ fn message_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
     };
 
     match action {
-        Action::SUBSCRIBE => {
+        logic::Action::Subscribe => {
             ctx.data.event.subscribe(request)?;
 
             let rate = jquery.get::<u64>("rate").unwrap_or(msg_info.rate);
@@ -565,7 +545,7 @@ fn message_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
                 .reply(format!("Subscribe (canid:{}) msg:{} OK", msg.get_id(), msg.get_name(),), 0);
         },
 
-        Action::UNSUBSCRIBE => {
+        logic::Action::Unsubscribe => {
             ctx.data.event.unsubscribe(request)?;
             request.reply(
                 format!("UnSubscribe (canid:{}) msg:{} OK", msg.get_id(), msg.get_name(),),
@@ -573,7 +553,7 @@ fn message_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
             );
         },
 
-        Action::READ => {
+        logic::Action::Read => {
             // Return current message snapshot.
             let msg_data = DataBcmMsg {
                 canid: msg.get_id(),
@@ -585,7 +565,7 @@ fn message_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
             request.reply(params, 0);
         },
 
-        Action::RESET => match msg.reset() {
+        logic::Action::Reset => match msg.reset() {
             Err(_) => {
                 return Err(AfbError::new(
                     "reset-msg-fail",
@@ -839,4 +819,68 @@ pub fn create_pool_verbs(
     api.add_evt_handler(evt_handler);
 
     Ok(())
+}
+
+//-------------------------------------
+// for benchmarking and testing purposes
+//-------------------------------------
+
+// Keep this module pure: no Afb types, no I/O.
+pub mod logic {
+    use sockcan::prelude::CanDataStatus;
+    use sockdata::types::SubscribeFlag;
+
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum Action {
+        Subscribe,
+        Unsubscribe,
+        Read,
+        Reset,
+    }
+
+    pub fn parse_action(s: &str) -> Option<Action> {
+        // Avoid allocation: `to_uppercase()` allocates; `eq_ignore_ascii_case()` does not.
+        if s.eq_ignore_ascii_case("SUBSCRIBE") {
+            Some(Action::Subscribe)
+        } else if s.eq_ignore_ascii_case("UNSUBSCRIBE") {
+            Some(Action::Unsubscribe)
+        } else if s.eq_ignore_ascii_case("READ") {
+            Some(Action::Read)
+        } else if s.eq_ignore_ascii_case("RESET") {
+            Some(Action::Reset)
+        } else {
+            None
+        }
+    }
+
+    pub fn parse_subscribe_flag(s: &str) -> Option<SubscribeFlag> {
+        // Avoid allocation: keep parsing in ASCII space.
+        if s.eq_ignore_ascii_case("NEW") {
+            Some(SubscribeFlag::NEW)
+        } else if s.eq_ignore_ascii_case("ALL") {
+            Some(SubscribeFlag::ALL)
+        } else {
+            None
+        }
+    }
+
+    pub fn should_emit(
+        status: CanDataStatus,
+        now: u64,
+        last: u64,
+        rate: u64,
+        watchdog: u64,
+        flag: SubscribeFlag,
+    ) -> bool {
+        // Mirror current notification behavior:
+        // - Updated: rate gate
+        // - Other statuses: watchdog gate, only when flag == ALL
+        match status {
+            CanDataStatus::Updated => now.saturating_sub(last) > rate.saturating_mul(1000),
+            _ => {
+                flag == SubscribeFlag::ALL
+                    && now.saturating_sub(last) > watchdog.saturating_mul(1000)
+            },
+        }
+    }
 }

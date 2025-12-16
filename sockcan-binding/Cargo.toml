@@ -16,5 +16,13 @@ afbv4 = {path= "../../afb-librust/afb-librs"}
 [lib]
 # optional test use:  clear && cargo build --example afb_test
 name = "afb_sockcan"
-crate-type = ["cdylib"]
+# Add "rlib" for bench
+crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "sockcan_binding_micro"
+harness = false

@@ -63,3 +63,12 @@ repos:
         language: system
         pass_filenames: false
         stages: [pre-commit]
+
+      # benchmarks (slow) -> on push only
+      # run Criterion benchmarks for lib_sockcan (frame generation, etc.)
+      - id: cargo-bench-lib-sockcan
+        name: cargo bench lib_sockcan
+        entry: bash -lc 'cargo bench  --all-features --all-targets'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
