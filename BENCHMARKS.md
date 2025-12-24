@@ -4,7 +4,7 @@ This document explains how to add, run, and interpret **Criterion** micro-benchm
 
 This repository is a workspace composed of multiple crates (notably `sockcan_data`, `sockcan_binding`, and `dbcapi`). Benchmarks should focus on **in-memory** hot paths such as:
 
-- construction of commonly used data structures (e.g. `sockdata::types::CanBmcData`),
+- construction of commonly used data structures (e.g. `sockdata::types::CanBcmData`),
 - serialization/deserialization (e.g. `serde_json` roundtrips for API payloads),
 - pure helper/utility logic (ID mapping, conversions, validations),
 - DBC-related processing in `dbcapi` (when it is isolated from I/O).
@@ -66,8 +66,8 @@ Create `sockcan-data/benches/sockdata_types.rs`:
 ```rust
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
-fn bench_can_bmcdata_new(c: &mut Criterion) {
-    c.bench_function("sockdata::CanBmcData::new (8 bytes)", |b| {
+fn bench_can_bcmdata_new(c: &mut Criterion) {
+    c.bench_function("sockdata::CanBcmData::new (8 bytes)", |b| {
         b.iter(|| {
             let canid = black_box(0x123u32);
             let stamp = black_box(42u64);
@@ -79,7 +79,7 @@ fn bench_can_bmcdata_new(c: &mut Criterion) {
             // Once we move to slice-based APIs, we can benchmark the no-allocation path separately.
             let data = vec![1u8, 2, 3, 4, 5, 6, 7, 8];
 
-            let frame = sockdata::types::CanBmcData::new(canid, opcode, stamp, data, len);
+            let frame = sockdata::types::CanBcmData::new(canid, opcode, stamp, data, len);
 
             black_box(frame.get_id());
             black_box(frame.get_stamp());
@@ -89,7 +89,7 @@ fn bench_can_bmcdata_new(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_can_bmcdata_new);
+criterion_group!(benches, bench_can_bcmdata_new);
 criterion_main!(benches);
 ```
 
@@ -139,7 +139,7 @@ Suggested benchmark categories (progressively):
 
 ### 7.1 `sockcan_data`
 
-- `CanBmcData` construction (with/without allocation, once APIs allow it)
+- `CanBcmData` construction (with/without allocation, once APIs allow it)
 - `serde_json` encode/decode for API payload types used frequently
 - conversion helpers in `sockcan-data/src/utils.rs` (if they are pure and stable)
 

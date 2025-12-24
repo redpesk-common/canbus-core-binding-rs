@@ -8,18 +8,18 @@
   "monitoring": true,
   "binding": [
     {
-      "uid": "sockbmc",
+      "uid": "sockbcm",
       "path": "${CARGO_TARGET_DIR}/debug/libafb_sockcan.so",
-      "info": "RUST sockbmc/can APIs",
+      "info": "RUST sockbcm/can APIs",
       "sock_api": "sockcan",
-      "sock_evt": "sockbmc"
+      "sock_evt": "sockbcm"
     },
     {
       "uid": "bms",
       "path": "${CARGO_TARGET_DIR}/debug/libafb_bms.so",
       "info": "RUST bms/DBC API",
       "dbc_api": "bms",
-      "sock_api": "sockbmc",
+      "sock_api": "sockbcm",
       "sock_evt": "sockcan"
     }
   ]

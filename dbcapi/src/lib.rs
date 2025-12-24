@@ -38,7 +38,7 @@ use sockcan::prelude::{
 };
 
 use sockdata::types::{
-    sockdata_register, CanBmcData, DataBcmMsg, DataBmcSig, SubscribeFlag, SubscribeParam,
+    sockdata_register, CanBcmData, DataBcmMsg, DataBcmSig, SubscribeFlag, SubscribeParam,
     UnSubscribeParam,
 };
 
@@ -90,7 +90,7 @@ impl CanSigCtrl for SigPoolCtx {
             Ok(info) => info,
         };
         // Build a snapshot of the signal for publication on the event bus.
-        let signal = DataBmcSig {
+        let signal = DataBcmSig {
             name: sig.get_name().to_owned(),
             status: sig.get_status(),
             stamp: sig.get_stamp(),
@@ -235,7 +235,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
 
                 AfbSubCall::call_sync(
                     request,
-                    ctx.msg_ctx.bmc,
+                    ctx.msg_ctx.bcm,
                     "subscribe",
                     SubscribeParam::new(
                         vec![msg.get_id()],
@@ -261,7 +261,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
 
         logic::Action::Read => {
             // Return the current signal snapshot to the requester.
-            let sig_data = DataBmcSig {
+            let sig_data = DataBcmSig {
                 name: sig.get_name().to_owned(),
                 stamp: sig.get_stamp(),
                 status: sig.get_status(),
@@ -288,7 +288,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
 ///
 /// Returns the verb and event handles used by the API.
 fn register_signal(
-    _config: &SockBmcConfig,
+    _config: &SockBcmConfig,
     msg_ctx: &Rc<MessageDataCtx>,
     _msg_name_dbg: &'static str,
     _msg_id_dbg: u32,
@@ -344,7 +344,7 @@ fn register_signal(
 struct MessageDataCtx {
     info: RefCell<PoolInfoCtx>,
     event: &'static AfbEvent,
-    bmc: &'static str,
+    bcm: &'static str,
 }
 
 /// Verb callback context for a message.
@@ -393,7 +393,7 @@ impl CanMsgCtrl for MessagePoolCtx {
                         return Err(error);
                     },
                 };
-                let sig_value = DataBmcSig {
+                let sig_value = DataBcmSig {
                     name: sig.get_name().to_string(),
                     status: sig.get_status(),
                     stamp: sig.get_stamp(),
@@ -439,7 +439,7 @@ impl CanMsgCtrl for MessagePoolCtx {
             // No active listener: unsubscribe from backend.
             let _status = AfbSubCall::call_sync(
                 self.data.event.get_apiv4(),
-                self.data.bmc,
+                self.data.bcm,
                 "unsubscribe",
                 UnSubscribeParam::new(vec![msg.get_id()]),
             );
@@ -531,7 +531,7 @@ fn message_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
 
                 AfbSubCall::call_sync(
                     request,
-                    ctx.data.bmc,
+                    ctx.data.bcm,
                     "subscribe",
                     SubscribeParam::new(
                         vec![msg.get_id()],
@@ -583,9 +583,9 @@ fn message_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
 }
 
 /// Static configuration given to registration helpers.
-struct SockBmcConfig {
+struct SockBcmConfig {
     _uid: &'static str,
-    bmc: &'static str,
+    bcm: &'static str,
     _evt: &'static str,
     jconf: JsoncObj,
 }
@@ -593,7 +593,7 @@ struct SockBmcConfig {
 /// Create a verb for a message, its event, and a group for its signals.
 fn register_msg(
     api: &mut afbv4::apiv4::AfbApi,
-    config: &SockBmcConfig,
+    config: &SockBcmConfig,
     msg_rfc: &Rc<RefCell<Box<dyn CanDbcMessage>>>,
 ) -> Result<(), AfbError> {
     let msg_ref = msg_rfc.clone();
@@ -641,7 +641,7 @@ fn register_msg(
     // Create a message-wide event and its runtime context.
     let event = AfbEvent::new(msg_name).finalize()?;
 
-    let vcbdata = Rc::new(MessageDataCtx { bmc: config.bmc, event, info: RefCell::new(info) });
+    let vcbdata = Rc::new(MessageDataCtx { bcm: config.bcm, event, info: RefCell::new(info) });
 
     // Attach controller so pool updates push to this event.
     msg.set_callback(Box::new(MessagePoolCtx { data: vcbdata.clone() }));
@@ -696,17 +696,17 @@ struct EvtUserData {
     pool: &'static mut dyn CanDbcPool,
 }
 
-/// Handler for raw BMC frames coming from the backend; updates the pool.
-fn bmc_event_cb(event: &AfbEventMsg, args: &AfbRqtData, ctx: &AfbCtxData) -> Result<(), AfbError> {
+/// Handler for raw BCM frames coming from the backend; updates the pool.
+fn bcm_event_cb(event: &AfbEventMsg, args: &AfbRqtData, ctx: &AfbCtxData) -> Result<(), AfbError> {
     let ctx: &EvtUserData = ctx.get_ref::<EvtUserData>()?;
 
-    // Extract backend CAN frame as CanBmcData.
-    let bmc_frame = match args.get::<&CanBmcData>(0) {
+    // Extract backend CAN frame as CanBcmData.
+    let bcm_frame = match args.get::<&CanBcmData>(0) {
         Err(_) => {
             let error = AfbError::new(
-                "event-bmc-invalid",
+                "event-bcm-invalid",
                 0,
-                "internal error: event is not SockBmcMsg type",
+                "internal error: event is not SockBcmMsg type",
             );
             afb_log_msg!(Critical, event, &error);
             return Ok(());
@@ -716,18 +716,18 @@ fn bmc_event_cb(event: &AfbEventMsg, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
 
     // Convert to pool format and update the pool.
     let pool_frame = CanMsgData {
-        canid: bmc_frame.get_id(),
-        stamp: bmc_frame.get_stamp(),
-        opcode: bmc_frame.get_opcode(),
-        len: bmc_frame.get_len(),
-        data: bmc_frame.get_data().as_slice(),
+        canid: bcm_frame.get_id(),
+        stamp: bcm_frame.get_stamp(),
+        opcode: bcm_frame.get_opcode(),
+        len: bcm_frame.get_len(),
+        data: bcm_frame.get_data().as_slice(),
     };
     match ctx.pool.update(&pool_frame) {
         Err(_) => {
             let error = AfbError::new(
                 "event-pool-update",
                 0,
-                format!("Fail to update message pool canid:{}", bmc_frame.get_id()),
+                format!("Fail to update message pool canid:{}", bcm_frame.get_id()),
             );
             afb_log_msg!(Critical, event, &error);
             return Ok(());
@@ -741,7 +741,7 @@ fn bmc_event_cb(event: &AfbEventMsg, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
 ///
 /// This wires:
 /// - verbs per signal and per message,
-/// - a backend event handler that receives raw BMC frames and updates the pool.
+/// - a backend event handler that receives raw BCM frames and updates the pool.
 pub fn create_pool_verbs(
     api_root: AfbApiV4,
     api: &mut afbv4::apiv4::AfbApi,
@@ -759,13 +759,13 @@ pub fn create_pool_verbs(
 
     // Basic runtime configuration.
     let uid = to_static_str(conf.get::<String>("uid")?);
-    let bmc = to_static_str(conf.get::<String>("sock_api")?);
+    let bcm = to_static_str(conf.get::<String>("sock_api")?);
     let evt = to_static_str(conf.get::<String>("sock_evt")?);
 
     // Leak the pool to bind its lifetime to the API (intended design in this binding).
     let pool = Box::leak(pool_box);
 
-    let bmc_config = SockBmcConfig { _uid: uid, bmc, _evt: evt, jconf };
+    let bcm_config = SockBcmConfig { _uid: uid, bcm, _evt: evt, jconf };
 
     let msgs = pool.get_messages();
 
@@ -794,7 +794,7 @@ pub fn create_pool_verbs(
             },
         };
 
-        if let Err(err) = register_msg(api, &bmc_config, msg_rfc) {
+        if let Err(err) = register_msg(api, &bcm_config, msg_rfc) {
             println!(
                 "create_pool_verbs: register_msg FAILED at idx={} canid={} name={} -> {:?}",
                 idx, canid, name, err
@@ -804,13 +804,13 @@ pub fn create_pool_verbs(
         }
     }
 
-    // Subscribe to backend raw frames (bmc/evt) and feed the DBC pool.
-    //let pattern = to_static_str(format!("{}/{}", bmc, evt));
+    // Subscribe to backend raw frames (bcm/evt) and feed the DBC pool.
+    //let pattern = to_static_str(format!("{}/{}", bcm, evt));
     let pattern = "*";
     let evt_handler = AfbEvtHandler::new(uid)
-        .set_info("Receive low-level BMC data frame")
+        .set_info("Receive low-level BCM data frame")
         .set_pattern(pattern)
-        .set_callback(bmc_event_cb)
+        .set_callback(bcm_event_cb)
         .set_context(EvtUserData { pool });
 
     evt_handler.register(api_root);

@@ -2,9 +2,9 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Native 'afb-sockbmc'",
+            "name": "Native 'afb-sockbcm'",
             "type": "lldb",
-            "preLaunchTask": "sockbmc-native-compile",
+            "preLaunchTask": "sockbcm-native-compile",
             "request": "launch",
             "program": "afb-binder",
             "env": {
@@ -24,7 +24,7 @@
         {
             "name": "Native 'afb-model3'",
             "type": "lldb",
-            "preLaunchTask": "sockbmc-native-compile",
+            "preLaunchTask": "sockbcm-native-compile",
             "request": "launch",
             "program": "afb-binder",
             "env": {

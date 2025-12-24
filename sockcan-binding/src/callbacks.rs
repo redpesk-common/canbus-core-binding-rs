@@ -25,17 +25,17 @@ use crate::context::{AfbClientData, CanEvtCtx, CheckCtx, SessionCtx, SubVerbCtx}
 use afbv4::prelude::*;
 
 use sockcan::prelude::{
-    CanBcmFlag, CanBcmOpCode, CanError, CanTimeStamp, SockBcmCmd, SockBcmMsg, SockCanBmc,
+    CanBcmFlag, CanBcmOpCode, CanError, CanTimeStamp, SockBcmCmd, SockBcmMsg, SockCanBcm,
     SockCanHandle,
 };
-use sockdata::types::{CanBmcData, CanBmcError, SubscribeParam, UnSubscribeParam};
+use sockdata::types::{CanBcmData, CanBcmError, SubscribeParam, UnSubscribeParam};
 use std::sync::Arc;
 
 /// Asynchronous callback invoked when the CAN BCM file descriptor becomes readable.
 ///
 /// This event-loop handler:
 /// - reads one BCM frame from the socket,
-/// - converts it into a higher-level `CanBmcData` or `CanBmcError`,
+/// - converts it into a higher-level `CanBcmData` or `CanBcmError`,
 /// - pushes the payload to the associated AFB event,
 /// - optionally re-arms RX timers on `RxTimeout` notifications,
 /// - closes the socket and unreferences the event when there are no more listeners.
@@ -47,11 +47,11 @@ pub(crate) fn async_can_cb(
 ) -> Result<(), AfbError> {
     let ctx: &CanEvtCtx = ctx.get_ref::<CanEvtCtx>()?;
 
-    // Helper closure that maps a low-level BCM message to the public `CanBmcData` structure.
+    // Helper closure that maps a low-level BCM message to the public `CanBcmData` structure.
     // TODO: need to rewrite – this allocates a new Vec<u8> for every message; consider a
     //   more zero-copy friendly representation for high-frequency CAN traffic.
-    let data = |msg: SockBcmMsg| -> Result<CanBmcData, CanError> {
-        Ok(CanBmcData {
+    let data = |msg: SockBcmMsg| -> Result<CanBcmData, CanError> {
+        Ok(CanBcmData {
             canid: msg.get_id()?,
             stamp: msg.get_stamp(),
             opcode: msg.get_opcode(),
@@ -68,7 +68,7 @@ pub(crate) fn async_can_cb(
         // Push either a normal data frame or an error wrapper to the event.
         let listener = match data(msg) {
             Err(error) => {
-                ctx.client.event.push(CanBmcError::new(error.get_uid(), -1, error.get_info()))
+                ctx.client.event.push(CanBcmError::new(error.get_uid(), -1, error.get_info()))
             },
             Ok(data) => ctx.client.event.push(data),
         };
@@ -90,7 +90,7 @@ pub(crate) fn async_can_cb(
                     afb_log_msg!(
                         Warning,
                         ctx.client.event,
-                        "fail-sockbmc-filter canid={} rate={} watchdog={}",
+                        "fail-sockbcm-filter canid={} rate={} watchdog={}",
                         canid,
                         ctx.client.rate,
                         ctx.client.watchdog
@@ -105,7 +105,7 @@ pub(crate) fn async_can_cb(
             afb_log_msg!(
                 Debug,
                 ctx.client.event,
-                "closing-bmc-event uid:{} no more listener",
+                "closing-bcm-event uid:{} no more listener",
                 ctx.client.uid
             );
             ctx.client.event.unref(); // delete associated event
@@ -149,8 +149,8 @@ pub(crate) fn subscribe_cb(
             // Open a new BCM socket on the configured CAN device.
             let sockfd = match SockCanHandle::open_bcm(ctx.candev, CanTimeStamp::CLASSIC) {
                 Ok(handle) => handle,
-                Err(bmcerr) => {
-                    let error = AfbError::new("fail-sockbmc-open", 0, bmcerr.to_string());
+                Err(bcmerr) => {
+                    let error = AfbError::new("fail-sockbcm-open", 0, bcmerr.to_string());
                     afb_log_msg!(Warning, request, &error);
                     return Err(error);
                 },
@@ -291,7 +291,7 @@ pub(crate) fn unsubscribe_cb(
     Ok(())
 }
 
-// ============ Close SockBmc ===============
+// ============ Close SockBcm ===============
 /// Close the BCM subscription for the current session.
 ///
 /// This verb:
@@ -312,7 +312,7 @@ pub(crate) fn close_cb(
     Ok(())
 }
 
-// =========== Check SockBmc ===============
+// =========== Check SockBcm ===============
 /// Health-check verb for BCM on the configured CAN device.
 ///
 /// This verb attempts to open a BCM socket on `vbdata.candev` and immediately closes it.
@@ -326,8 +326,8 @@ pub(crate) fn check_cb(
     // Best-effort open/close of a BCM socket to validate connectivity and configuration.
     match SockCanHandle::open_bcm(vbdata.candev, CanTimeStamp::CLASSIC) {
         Ok(sock) => sock.close(),
-        Err(bmcerr) => {
-            let error = AfbError::new("fail-sockbmc-open", 0, bmcerr.to_string());
+        Err(bcmerr) => {
+            let error = AfbError::new("fail-sockbcm-open", 0, bcmerr.to_string());
             afb_log_msg!(Warning, request, &error);
             return Err(error);
         },

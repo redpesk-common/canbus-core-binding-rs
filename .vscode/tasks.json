@@ -2,7 +2,7 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "sockbmc-native-compile",
+            "label": "sockbcm-native-compile",
             "type": "cargo",
             "command": "build",
             "args": [
@@ -19,10 +19,10 @@
             "label": "test-native-compile",
             "type": "cargo",
             "command": "build",
-            "dependsOn": "sockbmc-native-compile",
+            "dependsOn": "sockbcm-native-compile",
             "args": [
                 "--example",
-                "tap_sockbmc"
+                "tap_sockbcm"
             ],
             "problemMatcher": [
                 "$rustc"
