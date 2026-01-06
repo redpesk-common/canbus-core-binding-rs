@@ -18,7 +18,6 @@
       "uid": "model3",
       "path": "${CARGO_TARGET_DIR}/debug/libafb_model3.so",
       "info": "RUST model3/DBC API",
-      "dbc_api": "model3",
       "sock_api": "sockbcm",
       "sock_evt": "sockcan"
     }
