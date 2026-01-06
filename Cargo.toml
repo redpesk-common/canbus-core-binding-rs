@@ -12,3 +12,7 @@ members = [
 [workspace.package]
 edition = "2021"
 license = "GPL-3.0-only"
+
+[profile.bench]
+lto = true
+codegen-units = 1

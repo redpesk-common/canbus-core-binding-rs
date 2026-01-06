@@ -38,21 +38,12 @@ use sockcan::prelude::{
 };
 
 use sockdata::types::{
-    sockdata_register, CanBmcData, DataBcmMsg, DataBmcSig, SubscribeFlag, SubscribeParam,
+    sockdata_register, CanBcmData, DataBcmMsg, DataBcmSig, SubscribeFlag, SubscribeParam,
     UnSubscribeParam,
 };
 
 use std::cell::RefCell;
 use std::rc::Rc;
-
-#[allow(clippy::upper_case_acronyms)]
-/// High-level control actions exposed through the DBC verbs.
-enum Action {
-    SUBSCRIBE,
-    UNSUBSCRIBE,
-    READ,
-    RESET,
-}
 
 /// Runtime info associated with a pool of signals/messages.
 ///
@@ -99,7 +90,7 @@ impl CanSigCtrl for SigPoolCtx {
             Ok(info) => info,
         };
         // Build a snapshot of the signal for publication on the event bus.
-        let signal = DataBmcSig {
+        let signal = DataBcmSig {
             name: sig.get_name().to_owned(),
             status: sig.get_status(),
             stamp: sig.get_stamp(),
@@ -107,24 +98,21 @@ impl CanSigCtrl for SigPoolCtx {
         };
         // Push event depending on update status and throttling policy, update listeners count.
         // `rate` and `watchdog` are scaled by 1000, but the underlying time unit is not explicitly documented.
-        match sig.get_status() {
-            CanDataStatus::Updated => {
-                if (sig.get_stamp() - info.stamp) > info.rate * 1000 {
-                    info.stamp = sig.get_stamp();
-                    info.listeners = self.data.event.push(signal);
-                };
-                info.listeners
-            },
-            _ => {
-                if (sig.get_stamp() - info.stamp) > info.watchdog * 1000
-                    && info.flag == SubscribeFlag::ALL
-                {
-                    info.stamp = sig.get_stamp();
-                    info.listeners = self.data.event.push(signal);
-                };
-                info.listeners
-            },
+        let now = sig.get_stamp();
+
+        if logic::should_emit(
+            sig.get_status(),
+            now,
+            info.stamp,
+            info.rate,
+            info.watchdog,
+            info.flag.clone(),
+        ) {
+            info.stamp = now;
+            info.listeners = self.data.event.push(signal);
         }
+
+        info.listeners
     }
 }
 
@@ -151,18 +139,14 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
     let ctx = ctx.get_ref::<SigVerbCtx>()?;
     let jquery = args.get::<JsoncObj>(0)?;
     let jaction = jquery.get::<String>("action")?;
-    let action = match jaction.to_uppercase().as_str() {
-        "SUBSCRIBE" => Action::SUBSCRIBE,
-        "UNSUBSCRIBE" => Action::UNSUBSCRIBE,
-        "READ" => Action::READ,
-        "RESET" => Action::RESET,
-        _ => {
+    let action = match logic::parse_action(&jaction) {
+        Some(action) => action,
+        None => {
             let error =
                 AfbError::new("invalid-action", 0, "expect: SUBSCRIBE|UNSUBSCRIBE|READ|RESET");
             return Err(error);
         },
     };
-
     // Borrow underlying signal/message instances and pool infos.
     let mut sig = match ctx.sig_rfc.try_borrow_mut() {
         Ok(value) => value,
@@ -213,7 +197,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
     };
 
     match action {
-        Action::SUBSCRIBE => {
+        logic::Action::Subscribe => {
             // Subscribe the requester to the signal's event stream.
             ctx.data.event.subscribe(request)?;
             let rate = jquery.get::<u64>("rate").unwrap_or(msg_info.rate);
@@ -221,11 +205,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
             let flag = jquery
                 .get::<String>("flag")
                 .ok()
-                .and_then(|v| match v.to_uppercase().as_str() {
-                    "NEW" => Some(SubscribeFlag::NEW),
-                    "ALL" => Some(SubscribeFlag::ALL),
-                    _ => None,
-                })
+                .and_then(|v| logic::parse_subscribe_flag(&v))
                 .unwrap_or_else(|| msg_info.flag.clone());
 
             // Update signal throttling if tighter.
@@ -255,7 +235,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
 
                 AfbSubCall::call_sync(
                     request,
-                    ctx.msg_ctx.bmc,
+                    ctx.msg_ctx.bcm,
                     "subscribe",
                     SubscribeParam::new(
                         vec![msg.get_id()],
@@ -270,7 +250,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
                 .reply(format!("Subscribe (canid:{}) sig:{} OK", msg.get_id(), sig.get_name(),), 0);
         },
 
-        Action::UNSUBSCRIBE => {
+        logic::Action::Unsubscribe => {
             // Detach the requester from the signal's event stream.
             ctx.data.event.unsubscribe(request)?;
             request.reply(
@@ -279,9 +259,9 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
             );
         },
 
-        Action::READ => {
+        logic::Action::Read => {
             // Return the current signal snapshot to the requester.
-            let sig_data = DataBmcSig {
+            let sig_data = DataBcmSig {
                 name: sig.get_name().to_owned(),
                 stamp: sig.get_stamp(),
                 status: sig.get_status(),
@@ -292,7 +272,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
             request.reply(params, 0);
         },
 
-        Action::RESET => {
+        logic::Action::Reset => {
             // Reset signal runtime state in the DBC pool.
             sig.reset();
             request.reply(format!("Reset (canid:{}) sig:{} OK", msg.get_id(), sig.get_name(),), 0);
@@ -308,7 +288,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
 ///
 /// Returns the verb and event handles used by the API.
 fn register_signal(
-    _config: &SockBmcConfig,
+    _config: &SockBcmConfig,
     msg_ctx: &Rc<MessageDataCtx>,
     _msg_name_dbg: &'static str,
     _msg_id_dbg: u32,
@@ -364,7 +344,7 @@ fn register_signal(
 struct MessageDataCtx {
     info: RefCell<PoolInfoCtx>,
     event: &'static AfbEvent,
-    bmc: &'static str,
+    bcm: &'static str,
 }
 
 /// Verb callback context for a message.
@@ -413,7 +393,7 @@ impl CanMsgCtrl for MessagePoolCtx {
                         return Err(error);
                     },
                 };
-                let sig_value = DataBmcSig {
+                let sig_value = DataBcmSig {
                     name: sig.get_name().to_string(),
                     status: sig.get_status(),
                     stamp: sig.get_stamp(),
@@ -459,7 +439,7 @@ impl CanMsgCtrl for MessagePoolCtx {
             // No active listener: unsubscribe from backend.
             let _status = AfbSubCall::call_sync(
                 self.data.event.get_apiv4(),
-                self.data.bmc,
+                self.data.bcm,
                 "unsubscribe",
                 UnSubscribeParam::new(vec![msg.get_id()]),
             );
@@ -483,10 +463,10 @@ fn message_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
     let jquery = args.get::<JsoncObj>(0)?;
     let jaction = jquery.get::<String>("action")?;
     let action = match jaction.to_uppercase().as_str() {
-        "SUBSCRIBE" => Action::SUBSCRIBE,
-        "UNSUBSCRIBE" => Action::UNSUBSCRIBE,
-        "READ" => Action::READ,
-        "RESET" => Action::RESET,
+        "SUBSCRIBE" => logic::Action::Subscribe,
+        "UNSUBSCRIBE" => logic::Action::Unsubscribe,
+        "READ" => logic::Action::Read,
+        "RESET" => logic::Action::Reset,
         _ => {
             let error =
                 AfbError::new("invalid-action", 0, "expect: SUBSCRIBE|UNSUBSCRIBE|READ|RESET");
@@ -517,7 +497,7 @@ fn message_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
     };
 
     match action {
-        Action::SUBSCRIBE => {
+        logic::Action::Subscribe => {
             ctx.data.event.subscribe(request)?;
 
             let rate = jquery.get::<u64>("rate").unwrap_or(msg_info.rate);
@@ -551,7 +531,7 @@ fn message_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
 
                 AfbSubCall::call_sync(
                     request,
-                    ctx.data.bmc,
+                    ctx.data.bcm,
                     "subscribe",
                     SubscribeParam::new(
                         vec![msg.get_id()],
@@ -565,7 +545,7 @@ fn message_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
                 .reply(format!("Subscribe (canid:{}) msg:{} OK", msg.get_id(), msg.get_name(),), 0);
         },
 
-        Action::UNSUBSCRIBE => {
+        logic::Action::Unsubscribe => {
             ctx.data.event.unsubscribe(request)?;
             request.reply(
                 format!("UnSubscribe (canid:{}) msg:{} OK", msg.get_id(), msg.get_name(),),
@@ -573,7 +553,7 @@ fn message_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
             );
         },
 
-        Action::READ => {
+        logic::Action::Read => {
             // Return current message snapshot.
             let msg_data = DataBcmMsg {
                 canid: msg.get_id(),
@@ -585,7 +565,7 @@ fn message_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
             request.reply(params, 0);
         },
 
-        Action::RESET => match msg.reset() {
+        logic::Action::Reset => match msg.reset() {
             Err(_) => {
                 return Err(AfbError::new(
                     "reset-msg-fail",
@@ -603,9 +583,9 @@ fn message_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
 }
 
 /// Static configuration given to registration helpers.
-struct SockBmcConfig {
+struct SockBcmConfig {
     _uid: &'static str,
-    bmc: &'static str,
+    bcm: &'static str,
     _evt: &'static str,
     jconf: JsoncObj,
 }
@@ -613,7 +593,7 @@ struct SockBmcConfig {
 /// Create a verb for a message, its event, and a group for its signals.
 fn register_msg(
     api: &mut afbv4::apiv4::AfbApi,
-    config: &SockBmcConfig,
+    config: &SockBcmConfig,
     msg_rfc: &Rc<RefCell<Box<dyn CanDbcMessage>>>,
 ) -> Result<(), AfbError> {
     let msg_ref = msg_rfc.clone();
@@ -661,7 +641,7 @@ fn register_msg(
     // Create a message-wide event and its runtime context.
     let event = AfbEvent::new(msg_name).finalize()?;
 
-    let vcbdata = Rc::new(MessageDataCtx { bmc: config.bmc, event, info: RefCell::new(info) });
+    let vcbdata = Rc::new(MessageDataCtx { bcm: config.bcm, event, info: RefCell::new(info) });
 
     // Attach controller so pool updates push to this event.
     msg.set_callback(Box::new(MessagePoolCtx { data: vcbdata.clone() }));
@@ -716,17 +696,17 @@ struct EvtUserData {
     pool: &'static mut dyn CanDbcPool,
 }
 
-/// Handler for raw BMC frames coming from the backend; updates the pool.
-fn bmc_event_cb(event: &AfbEventMsg, args: &AfbRqtData, ctx: &AfbCtxData) -> Result<(), AfbError> {
+/// Handler for raw BCM frames coming from the backend; updates the pool.
+fn bcm_event_cb(event: &AfbEventMsg, args: &AfbRqtData, ctx: &AfbCtxData) -> Result<(), AfbError> {
     let ctx: &EvtUserData = ctx.get_ref::<EvtUserData>()?;
 
-    // Extract backend CAN frame as CanBmcData.
-    let bmc_frame = match args.get::<&CanBmcData>(0) {
+    // Extract backend CAN frame as CanBcmData.
+    let bcm_frame = match args.get::<&CanBcmData>(0) {
         Err(_) => {
             let error = AfbError::new(
-                "event-bmc-invalid",
+                "event-bcm-invalid",
                 0,
-                "internal error: event is not SockBmcMsg type",
+                "internal error: event is not SockBcmMsg type",
             );
             afb_log_msg!(Critical, event, &error);
             return Ok(());
@@ -736,18 +716,18 @@ fn bmc_event_cb(event: &AfbEventMsg, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
 
     // Convert to pool format and update the pool.
     let pool_frame = CanMsgData {
-        canid: bmc_frame.get_id(),
-        stamp: bmc_frame.get_stamp(),
-        opcode: bmc_frame.get_opcode(),
-        len: bmc_frame.get_len(),
-        data: bmc_frame.get_data().as_slice(),
+        canid: bcm_frame.get_id(),
+        stamp: bcm_frame.get_stamp(),
+        opcode: bcm_frame.get_opcode(),
+        len: bcm_frame.get_len(),
+        data: bcm_frame.get_data().as_slice(),
     };
     match ctx.pool.update(&pool_frame) {
         Err(_) => {
             let error = AfbError::new(
                 "event-pool-update",
                 0,
-                format!("Fail to update message pool canid:{}", bmc_frame.get_id()),
+                format!("Fail to update message pool canid:{}", bcm_frame.get_id()),
             );
             afb_log_msg!(Critical, event, &error);
             return Ok(());
@@ -761,7 +741,7 @@ fn bmc_event_cb(event: &AfbEventMsg, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
 ///
 /// This wires:
 /// - verbs per signal and per message,
-/// - a backend event handler that receives raw BMC frames and updates the pool.
+/// - a backend event handler that receives raw BCM frames and updates the pool.
 pub fn create_pool_verbs(
     api_root: AfbApiV4,
     api: &mut afbv4::apiv4::AfbApi,
@@ -779,13 +759,13 @@ pub fn create_pool_verbs(
 
     // Basic runtime configuration.
     let uid = to_static_str(conf.get::<String>("uid")?);
-    let bmc = to_static_str(conf.get::<String>("sock_api")?);
+    let bcm = to_static_str(conf.get::<String>("sock_api")?);
     let evt = to_static_str(conf.get::<String>("sock_evt")?);
 
     // Leak the pool to bind its lifetime to the API (intended design in this binding).
     let pool = Box::leak(pool_box);
 
-    let bmc_config = SockBmcConfig { _uid: uid, bmc, _evt: evt, jconf };
+    let bcm_config = SockBcmConfig { _uid: uid, bcm, _evt: evt, jconf };
 
     let msgs = pool.get_messages();
 
@@ -814,7 +794,7 @@ pub fn create_pool_verbs(
             },
         };
 
-        if let Err(err) = register_msg(api, &bmc_config, msg_rfc) {
+        if let Err(err) = register_msg(api, &bcm_config, msg_rfc) {
             println!(
                 "create_pool_verbs: register_msg FAILED at idx={} canid={} name={} -> {:?}",
                 idx, canid, name, err
@@ -824,13 +804,13 @@ pub fn create_pool_verbs(
         }
     }
 
-    // Subscribe to backend raw frames (bmc/evt) and feed the DBC pool.
-    //let pattern = to_static_str(format!("{}/{}", bmc, evt));
+    // Subscribe to backend raw frames (bcm/evt) and feed the DBC pool.
+    //let pattern = to_static_str(format!("{}/{}", bcm, evt));
     let pattern = "*";
     let evt_handler = AfbEvtHandler::new(uid)
-        .set_info("Receive low-level BMC data frame")
+        .set_info("Receive low-level BCM data frame")
         .set_pattern(pattern)
-        .set_callback(bmc_event_cb)
+        .set_callback(bcm_event_cb)
         .set_context(EvtUserData { pool });
 
     evt_handler.register(api_root);
@@ -839,4 +819,68 @@ pub fn create_pool_verbs(
     api.add_evt_handler(evt_handler);
 
     Ok(())
+}
+
+//-------------------------------------
+// for benchmarking and testing purposes
+//-------------------------------------
+
+// Keep this module pure: no Afb types, no I/O.
+pub mod logic {
+    use sockcan::prelude::CanDataStatus;
+    use sockdata::types::SubscribeFlag;
+
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum Action {
+        Subscribe,
+        Unsubscribe,
+        Read,
+        Reset,
+    }
+
+    pub fn parse_action(s: &str) -> Option<Action> {
+        // Avoid allocation: `to_uppercase()` allocates; `eq_ignore_ascii_case()` does not.
+        if s.eq_ignore_ascii_case("SUBSCRIBE") {
+            Some(Action::Subscribe)
+        } else if s.eq_ignore_ascii_case("UNSUBSCRIBE") {
+            Some(Action::Unsubscribe)
+        } else if s.eq_ignore_ascii_case("READ") {
+            Some(Action::Read)
+        } else if s.eq_ignore_ascii_case("RESET") {
+            Some(Action::Reset)
+        } else {
+            None
+        }
+    }
+
+    pub fn parse_subscribe_flag(s: &str) -> Option<SubscribeFlag> {
+        // Avoid allocation: keep parsing in ASCII space.
+        if s.eq_ignore_ascii_case("NEW") {
+            Some(SubscribeFlag::NEW)
+        } else if s.eq_ignore_ascii_case("ALL") {
+            Some(SubscribeFlag::ALL)
+        } else {
+            None
+        }
+    }
+
+    pub fn should_emit(
+        status: CanDataStatus,
+        now: u64,
+        last: u64,
+        rate: u64,
+        watchdog: u64,
+        flag: SubscribeFlag,
+    ) -> bool {
+        // Mirror current notification behavior:
+        // - Updated: rate gate
+        // - Other statuses: watchdog gate, only when flag == ALL
+        match status {
+            CanDataStatus::Updated => now.saturating_sub(last) > rate.saturating_mul(1000),
+            _ => {
+                flag == SubscribeFlag::ALL
+                    && now.saturating_sub(last) > watchdog.saturating_mul(1000)
+            },
+        }
+    }
 }

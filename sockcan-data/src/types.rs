@@ -29,7 +29,7 @@ use sockcan::prelude::{CanBcmOpCode, CanDataStatus, CanDbcType};
 
 // Automatically generate JSON encoder/decoder and AFB registration glue
 // for the following data types via the `AfbDataConverter!` macro.
-AfbDataConverter!(bmc_error, CanBmcError);
+AfbDataConverter!(bcm_error, CanBcmError);
 
 /// High-level error wrapper for BCM-related failures exposed to AFB clients.
 ///
@@ -39,16 +39,16 @@ AfbDataConverter!(bmc_error, CanBmcError);
 /// - `info`: human-readable error description.
 ///
 #[derive(Serialize, Deserialize, Debug, Default)]
-pub struct CanBmcError {
+pub struct CanBcmError {
     uid: String,
     status: i32,
     info: String,
 }
 
-impl CanBmcError {
-    /// Construct a new `CanBmcError` with the given identifier, status code and message.
+impl CanBcmError {
+    /// Construct a new `CanBcmError` with the given identifier, status code and message.
     pub fn new(uid: String, status: i32, info: String) -> Self {
-        CanBmcError { uid, status, info }
+        CanBcmError { uid, status, info }
     }
 
     /// Return the error identifier.
@@ -67,13 +67,13 @@ impl CanBmcError {
     }
 }
 
-AfbDataConverter!(bmc_data, CanBmcData);
+AfbDataConverter!(bcm_data, CanBcmData);
 
 /// High-level representation of a BCM CAN frame that travels through the AFB API.
 ///
 /// This structure is used as the payload of BCM-related events and verb replies.
 #[derive(Serialize, Deserialize, Debug)]
-pub struct CanBmcData {
+pub struct CanBcmData {
     pub canid: u32,
     pub len: u8,
     pub stamp: u64,
@@ -81,7 +81,7 @@ pub struct CanBmcData {
     pub data: Vec<u8>,
 }
 
-AfbDataConverter!(bmc_msg, DataBcmMsg);
+AfbDataConverter!(bcm_msg, DataBcmMsg);
 
 /// Short BCM message metadata used for certain notifications and logging.
 ///
@@ -92,7 +92,7 @@ pub struct DataBcmMsg {
     pub status: CanBcmOpCode,
 }
 
-AfbDataConverter!(bmc_sig, DataBmcSig);
+AfbDataConverter!(bcm_sig, DataBcmSig);
 
 /// Snapshot of a decoded DBC signal used as event payload.
 ///
@@ -102,17 +102,17 @@ AfbDataConverter!(bmc_sig, DataBmcSig);
 /// - `status`: data status (updated, timeout, invalid, etc.),
 /// - `value`: decoded value with the correct DBC type.
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DataBmcSig {
+pub struct DataBcmSig {
     pub name: String,
     pub stamp: u64,
     pub status: CanDataStatus,
     pub value: CanDbcType,
 }
 
-impl CanBmcData {
+impl CanBcmData {
     /// Construct a new BCM data record from low-level CAN parameters.
     pub fn new(canid: u32, opcode: CanBcmOpCode, stamp: u64, data: Vec<u8>, len: u8) -> Self {
-        CanBmcData { canid, len, stamp, opcode, data }
+        CanBcmData { canid, len, stamp, opcode, data }
     }
 
     /// Return the DLC (data length) of the CAN frame.
@@ -221,10 +221,10 @@ impl UnSubscribeParam {
 // knows how to (de)serialize these types in requests, replies and events.
 pub fn sockdata_register(_root: AfbApiV4) -> Result<(), AfbError> {
     // Custom types should be registered at binding startup time.
-    bmc_error::register()?;
-    bmc_data::register()?;
-    bmc_sig::register()?;
-    bmc_msg::register()?;
+    bcm_error::register()?;
+    bcm_data::register()?;
+    bcm_sig::register()?;
+    bcm_msg::register()?;
     subscribe_param::register()?;
     subscribe_flag::register()?;
     unsubscribe_param::register()?;
@@ -260,7 +260,7 @@ pub struct SockcanBindingConfig {
 /// - `"uid"`       → `api_uid`, default: `"sockcan"`
 /// - `"sock_api"`  → `sock_api`, default: `api_uid`
 /// - `"info"`      → `info`, default: `""`
-/// - `"event_uid"` → `event_uid`, default: `"sockbmc"`
+/// - `"event_uid"` → `event_uid`, default: `"sockbcm"`
 /// - `"acls"`      → `acls`, default: `"acl:sockcan"`
 ///
 /// All string values are converted to `'static` with `to_static_str`.
@@ -283,7 +283,7 @@ pub fn parse_sockcan_config(jconf: &JsoncObj) -> SockcanBindingConfig {
     let event_uid = if let Ok(value) = jconf.get::<String>("event_uid") {
         to_static_str(value)
     } else {
-        "sockbmc"
+        "sockbcm"
     };
 
     let acls = if let Ok(value) = jconf.get::<String>("acls") {

@@ -21,6 +21,7 @@ afbv4           = { path ="../../../afb-librust/afb-librs" }
 dbcparser = { path= "../../../canforge-rs/dbcparser"}
 
 [lib]
+doctest = false
 name = "afb_bms"
 crate-type = ["cdylib"]
 path = "src/bms-binding.rs"

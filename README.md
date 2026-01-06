@@ -189,7 +189,7 @@ Example binder config snippet (schematic):
         "dev": "vcan0",
         "uid": "sockcan",
         "sock_api": "sockcan",
-        "event_uid": "sockbmc",
+        "event_uid": "sockbcm",
         "acls": "acl:sockcan"
       }
     }

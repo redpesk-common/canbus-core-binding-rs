@@ -69,7 +69,7 @@ pub fn register(api: &mut AfbApi, config: &SockcanBindingConfig) -> Result<(), A
     // on the current session.
     let unsubscribe = AfbVerb::new("unsubscribe")
         .set_callback(unsubscribe_cb)
-        .set_info("Unsubscribe socket BMC cannids from session")
+        .set_info("Unsubscribe socket BCM cannids from session")
         .set_usage("{'canids':[x,y,...,z]}")
         .add_sample("{'canids':[266,257,599]}")?
         .finalize()?;
@@ -82,7 +82,7 @@ pub fn register(api: &mut AfbApi, config: &SockcanBindingConfig) -> Result<(), A
     let check = AfbVerb::new("check")
         .set_callback(check_cb)
         .set_context(CheckCtx { candev: config.can_device })
-        .set_info("Check socket BMC is available")
+        .set_info("Check socket BCM is available")
         .set_usage("no-input")
         .finalize()?;
     api.add_verb(check);
@@ -93,7 +93,7 @@ pub fn register(api: &mut AfbApi, config: &SockcanBindingConfig) -> Result<(), A
     // unreferences the AFB event and closes the underlying socket.
     let close = AfbVerb::new("close")
         .set_callback(close_cb)
-        .set_info("Close socket BMC session")
+        .set_info("Close socket BCM session")
         .set_usage("no-input")
         .finalize()?;
     api.add_verb(close);

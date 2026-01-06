@@ -16,3 +16,10 @@ afbv4= {path= "../../afb-librust/afb-librs"}
 name = "sockdata"
 crate-type = ["lib"]
 path = "src/lib.rs"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "sockdata_types"
+harness = false
