@@ -10,8 +10,8 @@ license.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sockcan_data = {path="../sockcan-data"}
-lib_sockcan= {path= "../../canbus-core-rs/sockcan"}
-afbv4 = {path= "../../afb-librust/afb-librs"}
+lib_sockcan= { git = "https://github.com/redpesk-common/canbus-core-rs.git", branch = "master" }
+afbv4 = { git = "https://github.com/redpesk-common/afb-librust", branch = "master" }
 
 [lib]
 # optional test use:  clear && cargo build --example afb_test
