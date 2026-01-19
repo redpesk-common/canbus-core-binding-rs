@@ -1,3 +1,5 @@
 pytest
 pytest-timeout
+cantools
+python-can
 git+https://github.com/redpesk-common/afb-test-py.git@master
