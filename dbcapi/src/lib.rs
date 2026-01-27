@@ -659,7 +659,8 @@ fn register_msg(
     // Build a group containing the message event and all signal verbs.
     let mut group = AfbGroup::new(msg_name)
         .add_event(event)
-        .set_info(to_static_str(format!("(canid:{})", msg.get_id())));
+        .set_info(to_static_str(format!("(canid:{})", msg.get_id())))
+        .set_prefix(msg_name);
 
     let sigs = msg.get_signals();
 
