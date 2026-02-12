@@ -274,10 +274,6 @@ Similar to BMS but using a different DBC/DB:
 
 ---
 
-## functional tests (afb-test-py + pytest)
-
-This project can be functionally tested by running an AFB binder instance and driving the exported verbs through `libafb` calls. The test harness is based on `afb-test-py` and executed with `pytest`, which also makes it easy to integrate into CI (JUnit XML output).
-
 ### prerequisites (system)
 
 You need a Linux environment with SocketCAN support.
@@ -325,9 +321,9 @@ pip install -r tests/requirements.txt
 Recommended `tests/requirements.txt` content:
 
 ```txt
-pytest
-pytest-timeout
--e ./third-party/afb-test-py
+cantools
+python-can
+git+https://github.com/redpesk-common/afb-test-py.git@master
 ```
 
 Notes:
@@ -338,7 +334,7 @@ Notes:
 ### build the bindings (Rust)
 
 ```bash
-cargo build
+cargo build --all-targets --all-features
 ```
 
 Make sure the produced `.so` are reachable at runtime (example for debug builds):
@@ -350,8 +346,7 @@ export LD_LIBRARY_PATH="$PWD/target/debug:${LD_LIBRARY_PATH:-}"
 ### run the functional tests
 
 ```bash
-mkdir -p reports
-pytest -q --junitxml=reports/afb-functional.xml tests/functional
+./tests/run.sh
 ```
 
 ### replay a CAN scenario during tests (canplayer)
@@ -365,18 +360,3 @@ canplayer vcan0=elmcan -l i -g 1 -I examples/samples/model3/candump/model3.log
 ```
 
 In the test suite, `canplayer` is typically started via `subprocess.Popen()` while the test waits for the expected AFB event(s).
-
-### CI / Jenkins
-
-For Jenkins integration, run:
-
-```bash
-pytest --junitxml=reports/afb-functional.xml tests/functional
-```
-
-and publish `reports/afb-functional.xml` with the Jenkins JUnit plugin.
-
-Important:
-
-- the Jenkins agent must be able to create `vcan0` (root or CAP_NET_ADMIN), and have `can-utils` installed.
-- if running inside containers, you will generally need a privileged container or appropriate capabilities to manage network interfaces.

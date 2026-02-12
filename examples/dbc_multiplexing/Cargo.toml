@@ -2,7 +2,6 @@
 name = "can-multiplexing"
 version = "0.1.0"
 edition = "2021"
-build = "build.rs"
 license = "GPL-3.0-only"
 publish = false
 
@@ -14,11 +13,11 @@ bitflags = { version = "2"}
 sockcan_binding = { path ="../../sockcan-binding"}
 sockcan_data    = { path ="../../sockcan-data" }
 dbcapi          = { path ="../../dbcapi" }
-lib_sockcan     = { path ="../../../canbus-core-rs/sockcan" }
-afbv4           = { path ="../../../afb-librust/afb-librs" }
+lib_sockcan     = { git = "https://github.com/redpesk-common/canbus-core-rs.git", branch = "master" }
+afbv4 = { git = "https://github.com/redpesk-common/afb-librust", branch = "master" }
 
 [build-dependencies]
-dbcparser= {path= "../../../canforge-rs/dbcparser"}
+dbcparser = { git = "https://github.com/redpesk-common/canforge-rs.git", branch = "master" }
 
 [lib]
 doctest = false
