@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .header(DEFAULT_HEADER)
         .range_check(true)
         .serde_json(true)
-        .whitelist(vec![545]) // restrict generated code size to candump.log messages
+        .whitelist(vec![257, 545, 641]) // restrict generated code size to candump.log messages
         .generate()?;
     Ok(())
 }
