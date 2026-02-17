@@ -92,6 +92,17 @@ Examples:
   - Similar structure to `bms`, but using a different DBC/DB and message pool.
   - Shows how to reuse the same core crates with a different CAN application.
 
+Tests and tooling:
+
+- `tests/run.sh`
+  Convenience runner for functional tests. Can optionally setup/cleanup a `vcan` interface.
+- `tests/setup_vcan.sh`, `tests/cleanup_vcan.sh`
+  Helper scripts used by `tests/run.sh` when options are enabled.
+- `tests/functional/test_canbus-binding.py`
+  Generic functional test runner that loads a DBC and validates AFB events by injecting frames on SocketCAN.
+- `tests/functional/test_can_multiplexing.py`
+  Multiplexing-focused functional tests.
+
 There may be additional test/example crates (e.g. `examples/test`) used for experimentation and integration testing.
 
 ---
@@ -155,28 +166,37 @@ Make sure the path dependencies in `Cargo.toml` are valid (e.g. `../../sockcan-d
 
 For development and testing, you can use a virtual CAN (`vcan`) interface instead of real hardware.
 
-On Linux (as root or with sudo):
+### manual setup
+
+As root or with sudo:
 
 ```bash
-# Load the vcan module
-modprobe vcan
+# Load the vcan module (best-effort)
+sudo modprobe vcan || true
+sudo modprobe can-bcm || true
 
-# Create a vcan0 interface
-ip link add dev vcan0 type vcan
-
-# Bring it up
-ip link set up vcan0
+# Create + bring up vcan0 (idempotent-ish)
+sudo ip link add dev vcan0 type vcan || true
+sudo ip link set up vcan0
 ```
 
-The default configuration in the bindings typically uses `dev = "vcan0"` if no explicit device is set in JSON.
+Cleanup:
+
+```bash
+sudo ip link del dev vcan0
+```
+
+### using the test helper scripts
+
+`tests/run.sh` can manage `vcan` for you (see "running the functional tests").
 
 ---
 
 ## using the sockcan binding in AFB
 
-The `sockcan_binding` crate builds a library called `afb_sockcan` that the AFB binder can load dynamically.
+The `sockcan-binding` crate builds a library called `afb_sockcan` that the AFB binder can load dynamically.
 
-Example binder config snippet (schematic):
+Example binder config snippet (schematic, AFB-side):
 
 ```jsonc
 {
@@ -274,7 +294,7 @@ Similar to BMS but using a different DBC/DB:
 
 ---
 
-### prerequisites (system)
+## prerequisites (system)
 
 You need a Linux environment with SocketCAN support.
 
@@ -295,17 +315,9 @@ sudo apt-get update
 sudo apt-get install -y iproute2 can-utils
 ```
 
-### setup a virtual CAN interface (vcan0)
+---
 
-```bash
-sudo modprobe vcan || true
-sudo modprobe can-bcm || true
-
-sudo ip link add dev vcan0 type vcan || true
-sudo ip link set up vcan0
-```
-
-### python test dependencies
+## python test dependencies
 
 From the repository root:
 
@@ -328,10 +340,13 @@ git+https://github.com/redpesk-common/afb-test-py.git@master
 
 Notes:
 
-- `libafb` is typically provided by the AFB/redpesk environment (system package), not via pip.
+- The Python standard library modules (`argparse`, `json`, `logging`, etc.) do not belong in `requirements.txt`.
+- The `afb-test-py` dependency provides the `afb_test` harness and the `libafb` Python bindings used by the functional tests.
 - `canplayer` comes from `can-utils` (system package), not via pip.
 
-### build the bindings (Rust)
+---
+
+## build the bindings (Rust)
 
 ```bash
 cargo build --all-targets --all-features
@@ -343,10 +358,91 @@ Make sure the produced `.so` are reachable at runtime (example for debug builds)
 export LD_LIBRARY_PATH="$PWD/target/debug:${LD_LIBRARY_PATH:-}"
 ```
 
-### run the functional tests
+---
+
+## functional test runner config format
+
+The generic functional test script (`tests/functional/test_canbus-binding.py`) consumes a JSON file passed with `--config`.
+
+In the sample files under `examples/samples/*/binding-config/binding-config.json`, the binding paths and per-binding settings are split:
+
+- `binding`: list of shared objects to load (only `path` is required)
+- `set`: per-binding configuration keyed by the `.so` basename
+  - `uid` is stored here (not inside `binding[]`)
+
+Minimal example:
+
+```jsonc
+{
+  "binding": [
+    { "path": "${CARGO_TARGET_DIR}/debug/libafb_sockcan.so" },
+    { "path": "${CARGO_TARGET_DIR}/debug/libafb_model3.so" }
+  ],
+  "set": {
+    "libafb_sockcan.so": {
+      "uid": "sockbcm",
+      "info": "RUST sockbcm/can APIs",
+      "sock_api": "sockcan",
+      "sock_evt": "sockbcm"
+    },
+    "libafb_model3.so": {
+      "uid": "model3",
+      "info": "RUST model3/can APIs",
+      "sock_api": "sockbcm",
+      "sock_evt": "sockcan"
+    }
+  }
+}
+```
+
+Optional top-level fields understood by the test runner:
+
+- `can_api` (string)
+- `dbc_file` (path)
+- `vcan_iface` (string)
+- `canids` (list or CSV string)
+
+---
+
+## running the functional tests
+
+### run all tests
 
 ```bash
 ./tests/run.sh
+```
+
+`tests/run.sh` will set:
+
+- `CARGO_TARGET_DIR` (defaults to `<repo>/target` if not already set)
+- `LD_LIBRARY_PATH` to include `${CARGO_TARGET_DIR}/debug` (for the generated `.so`)
+
+### optionally setup/cleanup vcan from the runner
+
+```bash
+./tests/run.sh --setup_vcan --cleanup_vcan
+```
+
+Options:
+
+- `--setup_vcan` creates (or brings up) the `vcan` interface before running tests (requires sudo/root).
+- `--cleanup_vcan` attempts to remove the `vcan` interface when the script exits (best-effort, requires sudo/root).
+- `--cleanup_vscan` is accepted as an alias for `--cleanup_vcan`.
+
+Select the interface with `VCAN_IFACE`:
+
+```bash
+VCAN_IFACE=vcan1 ./tests/run.sh --setup_vcan --cleanup_vcan
+```
+
+### filtering which CAN IDs are tested
+
+You can filter tested CAN IDs:
+
+1) CLI option to the test script (used only if `TEST_CANIDS` is unset):
+
+```bash
+./tests/functional/test_canbus-binding.py ... --canids 0x221,641
 ```
 
 ### replay a CAN scenario during tests (canplayer)
