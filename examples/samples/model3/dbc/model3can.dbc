@@ -2452,7 +2452,7 @@ BO_ 769 ID301VCFRONT_info: 8 VehicleBus
  SG_ VCFRONT_infoSubcomponent6 m33 : 32|32@1+ (1,0) [0|4294970000] ""  Receiver
  SG_ VCFRONT_infoUsageId m11 : 24|16@1+ (1,0) [0|65535] ""  Receiver
 
-BO_ 513 ID201VCFRONT_loggingAndVitals10H: 8 VehicleBus
+BO_ 513 ID201VCFRONT_loggingAndVitals10Hz: 8 VehicleBus
  SG_ VCFRONT_loggingAndVitals10HzInde M : 0|3@1+ (1,0) [0|7] ""  Receiver
  SG_ VCFRONT_activeLouverOpenPos m1 : 16|7@1+ (1,0) [0|100] "%"  Receiver
  SG_ VCFRONT_activeLouverOpenPosTarg m1 : 8|7@1+ (1,0) [0|100] "%"  Receiver

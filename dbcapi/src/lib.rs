@@ -60,7 +60,7 @@ struct PoolInfoCtx {
 
 /// Per-signal runtime data (throttle, watchdog, subscribers, event handle).
 ///
-/// This structure is shared between the signal pool controller and the verb
+/// This structure is shared between the signal PoolInfoCtxpool controller and the verb
 /// handlers to coordinate throttling and subscription state.
 struct SigDataCtx {
     info: RefCell<PoolInfoCtx>,
@@ -208,6 +208,12 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
                 .and_then(|v| logic::parse_subscribe_flag(&v))
                 .unwrap_or_else(|| msg_info.flag.clone());
 
+            // Persist the effective subscribe flag for this signal (used by should_emit()).
+
+            if flag == SubscribeFlag::ALL {
+                sig_info.flag = SubscribeFlag::ALL;
+            }
+
             // Update signal throttling if tighter.
             if rate < sig_info.rate {
                 sig_info.rate = rate
@@ -220,7 +226,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
             if msg_info.stamp == 0
                 || watchdog < msg_info.watchdog
                 || rate < msg_info.rate
-                || msg_info.flag != sig_info.flag
+                || (flag == SubscribeFlag::ALL && msg_info.flag != SubscribeFlag::ALL)
             {
                 if flag == SubscribeFlag::ALL {
                     msg_info.flag = SubscribeFlag::ALL;
@@ -290,7 +296,7 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
 fn register_signal(
     _config: &SockBcmConfig,
     msg_ctx: &Rc<MessageDataCtx>,
-    _msg_name_dbg: &'static str,
+    msg_name: &'static str,
     _msg_id_dbg: u32,
     msg_rfc: &Rc<RefCell<Box<dyn CanDbcMessage>>>,
     sig_rfc: &Rc<RefCell<Box<dyn CanDbcSignal>>>,
@@ -302,8 +308,9 @@ fn register_signal(
 
     let sig_name: &'static str = sig_ref.get_name();
 
-    // Create an event per signal.
-    let sig_event = AfbEvent::new(sig_name).finalize()?;
+    // Create a unique event per signal, namespaced by message (avoids collisions across messages).
+    let sig_evt_uid = to_static_str(format!("{}/{}", msg_name, sig_name));
+    let sig_event = AfbEvent::new(sig_evt_uid).finalize()?;
 
     // Initialize per-signal runtime context.
     let info = PoolInfoCtx {
@@ -399,7 +406,6 @@ impl CanMsgCtrl for MessagePoolCtx {
                     stamp: sig.get_stamp(),
                     value: sig.get_value(),
                 };
-
                 match info.flag {
                     SubscribeFlag::NEW => {
                         if sig.get_status() == CanDataStatus::Updated {
@@ -785,24 +791,9 @@ pub fn create_pool_verbs(
             Ok(m) => {
                 let id = m.get_id();
                 let n = m.get_name();
-                println!(
-                    "create_pool_verbs: msg[{}] ptr={:p} canid={} name={}",
-                    idx,
-                    Rc::as_ptr(msg_rfc),
-                    id,
-                    n
-                );
                 (id, n)
             },
-            Err(e) => {
-                println!(
-                    "create_pool_verbs: msg[{}] try_borrow() FAILED: {:?}, ptr={:p}",
-                    idx,
-                    e,
-                    Rc::as_ptr(msg_rfc),
-                );
-                (0, "<borrow_failed>")
-            },
+            Err(_e) => (0, "<borrow_failed>"),
         };
 
         if let Err(err) = register_msg(api, &bcm_config, msg_rfc) {
@@ -886,11 +877,12 @@ pub mod logic {
         // Mirror current notification behavior:
         // - Updated: rate gate
         // - Other statuses: watchdog gate, only when flag == ALL
+        //  For ALL+watchdog=0, emit on every notification even if timestamps don't move.
         match status {
             CanDataStatus::Updated => now.saturating_sub(last) > rate.saturating_mul(1000),
             _ => {
                 flag == SubscribeFlag::ALL
-                    && now.saturating_sub(last) > watchdog.saturating_mul(1000)
+                    && (watchdog == 0 || now.saturating_sub(last) > watchdog.saturating_mul(1000))
             },
         }
     }
