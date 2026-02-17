@@ -8,18 +8,24 @@
   "monitoring": true,
   "binding": [
     {
+      "path": "${CARGO_TARGET_DIR}/debug/libafb_sockcan.so"
+    },
+    {
+      "path": "${CARGO_TARGET_DIR}/debug/libafb_model3.so"
+    }
+  ],
+  "set": {
+    "libafb_sockcan.so": {
       "uid": "sockbcm",
-      "path": "${CARGO_TARGET_DIR}/debug/libafb_sockcan.so",
       "info": "RUST sockbcm/can APIs",
       "sock_api": "sockcan",
       "sock_evt": "sockbcm"
     },
-    {
+    "libafb_model3.so": {
       "uid": "model3",
-      "path": "${CARGO_TARGET_DIR}/debug/libafb_model3.so",
-      "info": "RUST model3/DBC API",
+      "info": "RUST model3/can APIs",
       "sock_api": "sockbcm",
       "sock_evt": "sockcan"
     }
-  ]
+  }
 }

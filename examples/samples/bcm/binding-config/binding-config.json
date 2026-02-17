@@ -10,9 +10,13 @@
     {
       "uid": "sockbcm",
       "path": "${CARGO_TARGET_DIR}/debug/libafb_sockcan.so",
+    }
+  ],
+  "set": {
+    "libafb_sockcan.so": {
       "info": "RUST sockbcm/can APIs",
       "sock_api": "sockcan",
       "sock_evt": "sockbcm"
     }
-  ]
+  }
 }
