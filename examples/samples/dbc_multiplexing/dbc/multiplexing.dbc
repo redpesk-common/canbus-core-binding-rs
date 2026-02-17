@@ -1,0 +1,62 @@
+VERSION ""
+
+NS_ :
+    NS_DESC_
+    CM_
+    BA_DEF_
+    BA_
+    VAL_
+    CAT_DEF_
+    CAT_
+    FILTER
+    BA_DEF_DEF_
+    EV_DATA_
+    ENVVAR_DATA_
+    ENVVAR_
+    SGTYPE_
+    SGTYPE_VAL_
+    BA_DEF_SGTYPE_
+    BA_SGTYPE_
+    SIG_TYPE_REF_
+    VAL_TABLE_
+    SIG_GROUP_
+    SIG_VALTYPE_
+    SIGTYPE_VALTYPE_
+    BO_TX_BU_
+    BA_DEF_REL_
+    BA_REL_
+    BA_DEF_DEF_REL_
+    BU_SG_REL_
+    BU_EV_REL_
+    BU_BO_REL_
+    SG_MUL_VAL_
+
+BS_:
+
+BU_: Tx Rx
+
+
+BO_ 322 MUX_TEST: 8 Tx
+ SG_ MUX_signal M : 0|2@1+ (1,0) [0|2] "" Rx
+ SG_ open m0 : 3|1@1+ (1,0) [0|1] "" Rx
+ SG_ closed m0 : 4|1@1+ (1,0) [0|1] "" Rx
+ SG_ direction m0 : 5|2@1+ (1,0) [0|3] "" Rx
+ SG_ mode m0 : 61|3@1+ (1,0) [0|7] "" Rx
+ SG_ speed m1 : 3|10@1- (0.1,0) [-51.2|51.1] "m/s" Rx
+ SG_ temperature m1 : 13|8@1- (1,0) [-128|127] "degC" Rx
+
+CM_ BO_ 322 "Minimal multiplexing test message. MUX_signal selects pages. Page 0: open/closed/direction/mode. Page 1: speed/temperature. Collisions between pages are intentional, but signals inside the same page do not overlap (cantools requirement).";
+CM_ SG_ 322 MUX_signal "Multiplexer: 0=STATE, 1=MEASURE, 2=INVALID.";
+CM_ SG_ 322 open "STATE page (MUX_signal=0). Collides with MEASURE speed bits.";
+CM_ SG_ 322 closed "STATE page (MUX_signal=0). Collides with MEASURE speed bits.";
+CM_ SG_ 322 direction "STATE page (MUX_signal=0). Collides with MEASURE speed bits.";
+CM_ SG_ 322 mode "STATE page (MUX_signal=0). Test mode at bits 61..63.";
+CM_ SG_ 322 speed "MEASURE page (MUX_signal=1). Signed 10-bit, factor 0.1 m/s. Overlaps STATE page bits starting at bit 3.";
+CM_ SG_ 322 temperature "MEASURE page (MUX_signal=1). Signed 8-bit degC. Located at bit 13 to avoid overlap with speed.";
+
+VAL_ 322 MUX_signal 0 "STATE" 1 "MEASURE" 2 "INVALID" ;
+VAL_ 322 open 0 "NO" 1 "YES" ;
+VAL_ 322 closed 0 "NO" 1 "YES" ;
+VAL_ 322 direction 0 "STOP" 1 "OPENING" 2 "CLOSING" 3 "UNKNOWN" ;
+VAL_ 322 mode 0 "M0" 1 "M1" 2 "M2" 3 "M3" 4 "M4" 5 "M5" 6 "M6" 7 "M7" ;
+

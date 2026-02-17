@@ -7,6 +7,7 @@ members = [
     "dbcapi",
     "examples/model3",
     "examples/bms",
+    "examples/dbc_multiplexing",
 ]
 
 [workspace.package]

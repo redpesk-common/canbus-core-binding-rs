@@ -1,0 +1,29 @@
+[package]
+name = "can-multiplexing"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"], optional = true  }
+serde_json = {version= "1", optional = true }
+bitvec = { version = "1.0", default-features = false }
+bitflags = { version = "2"}
+sockcan_binding = { path ="../../sockcan-binding"}
+sockcan_data    = { path ="../../sockcan-data" }
+dbcapi          = { path ="../../dbcapi" }
+lib_sockcan     = { git = "https://github.com/redpesk-common/canbus-core-rs.git", branch = "master" }
+afbv4 = { git = "https://github.com/redpesk-common/afb-librust", branch = "master" }
+
+[build-dependencies]
+dbcparser = { git = "https://github.com/redpesk-common/canforge-rs.git", branch = "master" }
+
+[lib]
+doctest = false
+name = "afb_can_multiplexing"
+crate-type = ["cdylib"]
+path = "src/can-multiplexing.rs"
+
+[features]
+default = ["serde","serde_json"]

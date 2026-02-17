@@ -659,7 +659,8 @@ fn register_msg(
     // Build a group containing the message event and all signal verbs.
     let mut group = AfbGroup::new(msg_name)
         .add_event(event)
-        .set_info(to_static_str(format!("(canid:{})", msg.get_id())));
+        .set_info(to_static_str(format!("(canid:{})", msg.get_id())))
+        .set_prefix(msg_name);
 
     let sigs = msg.get_signals();
 
@@ -722,6 +723,16 @@ fn bcm_event_cb(event: &AfbEventMsg, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
         len: bcm_frame.get_len(),
         data: bcm_frame.get_data().as_slice(),
     };
+
+    if let sockcan::prelude::CanBcmOpCode::RxTimeout = pool_frame.opcode {
+        return Ok(()); // ignore timeout events
+    }
+
+    if pool_frame.len == 0 || pool_frame.data.is_empty() {
+        // Defensive guard; prevents bitvec panic in generated DBC update()
+        return Ok(());
+    }
+
     match ctx.pool.update(&pool_frame) {
         Err(_) => {
             let error = AfbError::new(

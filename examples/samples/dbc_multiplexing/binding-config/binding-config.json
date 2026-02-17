@@ -1,5 +1,5 @@
 {
-  "name": "afb-canbus",
+  "name": "afb-canbus-multiplexing",
   "no-ldpaths": true,
   "port": 1234,
   "alias": [
@@ -15,9 +15,9 @@
       "sock_evt": "sockbcm"
     },
     {
-      "uid": "model3",
-      "path": "${CARGO_TARGET_DIR}/debug/libafb_model3.so",
-      "info": "RUST model3/DBC API",
+      "uid": "can-multiplexing",
+      "path": "${CARGO_TARGET_DIR}/debug/libafb_can_multiplexing.so",
+      "info": "RUST multiplexing/DBC API",
       "sock_api": "sockbcm",
       "sock_evt": "sockcan"
     }

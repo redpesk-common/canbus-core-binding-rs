@@ -273,3 +273,90 @@ Similar to BMS but using a different DBC/DB:
 - Serves as a template for building further CAN services.
 
 ---
+
+### prerequisites (system)
+
+You need a Linux environment with SocketCAN support.
+
+- `iproute2` (for `ip link ...`)
+- `can-utils` (for `canplayer`)
+- kernel modules:
+  - `vcan`
+  - `can-bcm` (recommended)
+
+Example on a typical Fedora/Debian-like system:
+
+```bash
+# Fedora
+sudo dnf install -y iproute can-utils
+
+# Debian/Ubuntu
+sudo apt-get update
+sudo apt-get install -y iproute2 can-utils
+```
+
+### setup a virtual CAN interface (vcan0)
+
+```bash
+sudo modprobe vcan || true
+sudo modprobe can-bcm || true
+
+sudo ip link add dev vcan0 type vcan || true
+sudo ip link set up vcan0
+```
+
+### python test dependencies
+
+From the repository root:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -U pip
+
+# install Python deps
+pip install -r tests/requirements.txt
+```
+
+Recommended `tests/requirements.txt` content:
+
+```txt
+cantools
+python-can
+git+https://github.com/redpesk-common/afb-test-py.git@master
+```
+
+Notes:
+
+- `libafb` is typically provided by the AFB/redpesk environment (system package), not via pip.
+- `canplayer` comes from `can-utils` (system package), not via pip.
+
+### build the bindings (Rust)
+
+```bash
+cargo build --all-targets --all-features
+```
+
+Make sure the produced `.so` are reachable at runtime (example for debug builds):
+
+```bash
+export LD_LIBRARY_PATH="$PWD/target/debug:${LD_LIBRARY_PATH:-}"
+```
+
+### run the functional tests
+
+```bash
+./tests/run.sh
+```
+
+### replay a CAN scenario during tests (canplayer)
+
+Some tests may replay a recorded CAN dump to validate subscriptions and events.
+
+Example using the provided Model3 candump sample:
+
+```bash
+canplayer vcan0=elmcan -l i -g 1 -I examples/samples/model3/candump/model3.log
+```
+
+In the test suite, `canplayer` is typically started via `subprocess.Popen()` while the test waits for the expected AFB event(s).
