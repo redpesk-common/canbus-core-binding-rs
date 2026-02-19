@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-#
 # Copyright (C) 2026 Ronan Le Martret
 #
 # This program is free software: you can redistribute it and/or modify
