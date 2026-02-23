@@ -355,7 +355,7 @@ cargo build --all-targets --all-features
 Make sure the produced `.so` are reachable at runtime (example for debug builds):
 
 ```bash
-export LD_LIBRARY_PATH="$PWD/target/debug:${LD_LIBRARY_PATH:-}"
+export LD_LIBRARY_PATH="$PWD/target/debug:${CARGO_TARGET_DIR}/release:${LD_LIBRARY_PATH:-}"
 ```
 
 ---
@@ -375,8 +375,8 @@ Minimal example:
 ```jsonc
 {
   "binding": [
-    { "path": "${CARGO_TARGET_DIR}/debug/libafb_sockcan.so" },
-    { "path": "${CARGO_TARGET_DIR}/debug/libafb_model3.so" }
+    { "path": "libafb_sockcan.so" },
+    { "path": "libafb_model3.so" }
   ],
   "set": {
     "libafb_sockcan.so": {
@@ -415,7 +415,7 @@ Optional top-level fields understood by the test runner:
 `tests/run.sh` will set:
 
 - `CARGO_TARGET_DIR` (defaults to `<repo>/target` if not already set)
-- `LD_LIBRARY_PATH` to include `${CARGO_TARGET_DIR}/debug` (for the generated `.so`)
+- `LD_LIBRARY_PATH` to include `${CARGO_TARGET_DIR}/debug` or `${CARGO_TARGET_DIR}/release` (for the generated `.so`)
 
 ### optionally setup/cleanup vcan from the runner
 

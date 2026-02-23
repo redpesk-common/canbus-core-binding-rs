@@ -9,7 +9,7 @@
   "binding": [
     {
       "uid": "sockbcm",
-      "path": "${CARGO_TARGET_DIR}/debug/libafb_sockcan.so",
+      "path": "libafb_sockcan.so"
     }
   ],
   "set": {

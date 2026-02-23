@@ -37,8 +37,8 @@ ROOT = Path(__file__).resolve().parents[2]
 TARGET = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target"))
 
 # Binding shared objects (built by cargo)
-SOCKCAN_SO = TARGET / "debug" / "libafb_sockcan.so"
-MULTIPLEX_SO = TARGET / "debug" / "libafb_can_multiplexing.so"
+SOCKCAN_SO = "libafb_sockcan.so"
+MULTIPLEX_SO = "libafb_can_multiplexing.so"
 
 # Two instances of the same binding with different uids/config
 bindings = {

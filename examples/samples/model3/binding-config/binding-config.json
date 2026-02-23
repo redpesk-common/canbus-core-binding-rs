@@ -8,10 +8,10 @@
   "monitoring": true,
   "binding": [
     {
-      "path": "${CARGO_TARGET_DIR}/debug/libafb_sockcan.so"
+      "path": "libafb_sockcan.so"
     },
     {
-      "path": "${CARGO_TARGET_DIR}/debug/libafb_model3.so"
+      "path": "libafb_model3.so"
     }
   ],
   "set": {

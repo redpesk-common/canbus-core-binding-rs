@@ -1,0 +1,117 @@
+#!/bin/bash
+
+# when this script will be run, the packages your-application.rpm and your-application-redtest.rpm
+# would have been installed on the target
+
+PACKAGE_NAME="canbus-core-binding-rs"
+MAIN_SO_PATH="/usr/redpesk/canbus-core-binding-rs/lib"
+EXAMPLES_SO_PATH="/usr/libexec/redtest/canbus-core-binding-rs/lib"
+
+export LD_LIBRARY_PATH="${MAIN_SO_PATH}:${EXAMPLES_SO_PATH}:${LD_LIBRARY_PATH:-}"
+
+# Run your tests (generate .tap file for redpesk)
+echo "--- Start test python hello world binding ---"
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
+# Create the directory where the logs need to be
+LOG_DIR="${LOG_DIR:-/var/log/redtest/${PACKAGE_NAME}}"
+if ! mkdir -p "${LOG_DIR}" 2>/dev/null || [[ ! -w "${LOG_DIR}" ]]; then
+  LOG_DIR="$(pwd)/logs/"
+  mkdir -p "${LOG_DIR}"
+fi
+export LOG_DIR
+
+COVERAGE_DIR="${COVERAGE_DIR:-/var/log/redtest/${PACKAGE_NAME}/coverage}"
+rm -fr "${COVERAGE_DIR}"
+if ! mkdir -p "${COVERAGE_DIR}" 2>/dev/null; then
+  echo "WARNING: failed to cleanup coverage directory ${COVERAGE_DIR}, using local directory instead"
+  COVERAGE_DIR="$SCRIPT_DIR/../coverage"
+  mkdir -p "${COVERAGE_DIR}"
+fi
+export COVERAGE_DIR
+
+export LLVM_PROFILE_FILE="${COVERAGE_DIR}/%p-%m.profraw"
+export LLVM_PROFDATA=/usr/bin/llvm-profdata
+export LLVM_COV=/usr/bin/llvm-cov
+
+
+RUN_SH="${SCRIPT_DIR}/run.sh"
+if [ ! -f "${RUN_SH}" ]; then
+  echo "${RUN_SH}: notfound, using local directory instead"
+  RUN_SH="${SCRIPT_DIR}/../tests/run.sh"
+  if [ ! -f "${RUN_SH}" ]; then
+    echo "${RUN_SH}: notfound"
+    exit 1
+  fi
+fi
+
+echo "Running tests with ${RUN_SH}"
+${RUN_SH} \
+    --setup_vcan \
+    --cleanup_vcan \
+    --log_dir ${LOG_DIR}
+
+##########################
+# report status
+##########################
+
+echo "--- Generate coverage report ---"
+echo "Merging .profraw files from ${COVERAGE_DIR} into ${COVERAGE_DIR}/merged.profdata"
+"$LLVM_PROFDATA" merge -sparse ${COVERAGE_DIR}/*.profraw \
+  -o "${COVERAGE_DIR}/merged.profdata"
+
+
+if [ ! -f "${MAIN_SO_PATH}/libafb_sockcan.so" ]; then
+  echo "${MAIN_SO_PATH}/libafb_sockcan.so: notfound, using local release directory instead"
+  MAIN_SO_PATH="${ROOT_DIR}/target/release"
+  if [ ! -f "${MAIN_SO_PATH}/libafb_sockcan.so" ]; then
+    echo "${MAIN_SO_PATH}/libafb_sockcan.so: notfound, using local debug directory instead"
+    MAIN_SO_PATH="${ROOT_DIR}/target/debug"
+    if [ ! -f "${MAIN_SO_PATH}/libafb_sockcan.so" ]; then
+      echo "${MAIN_SO_PATH}/libafb_sockcan.so: notfound, coverage impossible"
+      exit 1
+    fi
+  fi
+fi
+
+if [ ! -f "${EXAMPLES_SO_PATH}/libafb_model3.so" ]; then
+  echo "${EXAMPLES_SO_PATH}/libafb_model3.so: notfound, using local release directory instead"
+  EXAMPLES_SO_PATH="${ROOT_DIR}/target/release"
+  if [ ! -f "${EXAMPLES_SO_PATH}/libafb_model3.so" ]; then
+    echo "${EXAMPLES_SO_PATH}/libafb_model3.so: notfound, using local debug directory instead"
+    EXAMPLES_SO_PATH="${ROOT_DIR}/target/debug"
+    if [ ! -f "${EXAMPLES_SO_PATH}/libafb_model3.so" ]; then
+      echo "${EXAMPLES_SO_PATH}/libafb_model3.so: notfound, coverage impossible"
+      exit 1
+    fi
+  fi
+fi
+
+echo "Generating lcov report from merged.profdata"
+
+LCOV_OUTPUT="${COVERAGE_DIR}/lcov.info"
+"$LLVM_COV" export \
+  --format=lcov \
+  --instr-profile="${COVERAGE_DIR}/merged.profdata" \
+  "${MAIN_SO_PATH}/libafb_sockcan.so" \
+  -object "${EXAMPLES_SO_PATH}/libafb_model3.so" \
+  -object "${EXAMPLES_SO_PATH}/libafb_can_multiplexing.so" \
+  -object "${EXAMPLES_SO_PATH}/libafb_bms.so" \
+  --ignore-filename-regex='(/\.cargo/registry/|/canbus-core-rs/|/afb-librust/|/target/)' \
+  > "${LCOV_OUTPUT}"
+
+echo "Generating html report from merged.profdata"
+
+"$LLVM_COV" show \
+  --format=html \
+  --instr-profile="${COVERAGE_DIR}/merged.profdata" \
+  "${MAIN_SO_PATH}/libafb_sockcan.so" \
+  -object "${EXAMPLES_SO_PATH}/libafb_model3.so" \
+  -object "${EXAMPLES_SO_PATH}/libafb_can_multiplexing.so" \
+  -object "${EXAMPLES_SO_PATH}/libafb_bms.so" \
+  --output-dir "${COVERAGE_DIR}/html" \
+  --ignore-filename-regex='(/\.cargo/registry/|/canbus-core-rs/|/afb-librust/|/target/)'
+
+echo "Check if any tests failed (looking for 'not ok' in .tap files)"
+grep -viq '^not ok' ${LOG_DIR}/*.tap
+
