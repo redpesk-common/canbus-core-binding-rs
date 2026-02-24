@@ -9,3 +9,13 @@ __*
 cargo-test*
 Cargo.lock
 reports
+
+.venv/
+.venv*/
+
+logs/
+
+app.info
+
+coverage
+coverage.xml

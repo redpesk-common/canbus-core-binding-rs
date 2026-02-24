@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-#
 # Copyright (C) 2026 Ronan Le Martret
 #
 # This program is free software: you can redistribute it and/or modify
@@ -223,23 +222,17 @@ def _init_from_binder_config(path: Path) -> None:
                 "Invalid binder config: each 'binding' entry must be an object"
             )
 
-        so_path = item.get("path")
-        if not so_path:
+        so_name = item.get("path")
+        if not so_name:
             raise ValueError(
                 "Invalid binder config: each 'binding' entry must contain 'path'"
             )
-
-        resolved = _resolve_path(str(so_path), base_dir=base_dir)
-        if not resolved.exists():
-            raise FileNotFoundError(f"Binding shared object not found: {resolved}")
-
-        so_name = resolved.name
 
         # uid is now in set[so_name]
         entry = set_cfg.get(so_name)
         if entry is None:
             raise ValueError(
-                f"Invalid binder config: missing 'set[\"{so_name}\"]' entry for binding path {resolved}"
+                f"Invalid binder config: missing 'set[\"{so_name}\"]' entry for binding .so file {so_name}"
             )
 
         uid = entry.get("uid")
@@ -251,10 +244,10 @@ def _init_from_binder_config(path: Path) -> None:
         if uid in new_bindings and Path(new_bindings[uid]).name != so_name:
             raise ValueError(
                 f"Invalid binder config: duplicate uid '{uid}' used for multiple bindings "
-                f"({new_bindings[uid]} and {resolved})"
+                f"({new_bindings[uid]} and {so_name})"
             )
 
-        new_bindings[uid] = str(resolved)
+        new_bindings[uid] = str(so_name)
 
     # Build config entries keyed by the shared-object basename (libafb_*.so).
     new_config: Dict[str, Dict[str, Any]] = {}
@@ -1026,7 +1019,7 @@ if __name__ == "__main__":
     cfg_path = args.config.expanduser()
     if not cfg_path.exists():
         p.error(f"--config file not found: {cfg_path}")
-
+    print(f"Using binder config: {cfg_path}")
     _init_from_binder_config(cfg_path)
 
     # CLI overrides (highest priority).
