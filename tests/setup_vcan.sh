@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 # Setup a vcan interface in an idempotent way.
 # Creates a marker file so cleanup only removes what we created.
 
@@ -20,7 +19,7 @@ fi
 
 # Load vcan kernel module if possible (best-effort).
 if command -v modprobe >/dev/null 2>&1; then
-  modprobe vcan >/dev/null 2>&1 || true
+  modprobe -v vcan >/dev/null 2>&1 || true
 fi
 
 if ip link show dev "${IFACE}" >/dev/null 2>&1; then

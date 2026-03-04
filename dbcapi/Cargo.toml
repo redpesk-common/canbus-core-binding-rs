@@ -19,7 +19,7 @@ crate-type = ["lib"]
 path = "src/lib.rs"
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "=0.4.0", features = ["html_reports"] }
 
 [[bench]]
 name = "dbcapi_logic"
