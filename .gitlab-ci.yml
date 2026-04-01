@@ -3,7 +3,7 @@ include:
   - 'https://raw.githubusercontent.com/redpesk-devtools/gitlab-ci-factory-templates/refs/heads/master/rp-cli-template-ci.yml'
 
 # variables:
-  # RP_VERBOSE: "true"  # just uncomment this line to enable debugging mode
+  #RP_VERBOSE: "true"  # just uncomment this line to enable debugging mode
 
 
 stages:

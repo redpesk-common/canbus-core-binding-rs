@@ -147,7 +147,7 @@ def setUpModule():
 class TestCanMultiplexing(AFBTestCase):
     def test_check_ok(self):
         print(
-            f"test_check_ok -----------------------------------------------------------------"
+            "test_check_ok -----------------------------------------------------------------"
         )
         r1 = libafb.callsync(self.binder, "sockbcm", "check")
         assert r1.args == ()
@@ -158,7 +158,7 @@ class TestCanMultiplexing(AFBTestCase):
         when a multiplexed frame is sent.
         """
         print(
-            f"test_mux_signal_event_emitted -----------------------------------------------------------------"
+            "test_mux_signal_event_emitted -----------------------------------------------------------------"
         )
         _, msg = _load_mux_message()
 
@@ -220,7 +220,7 @@ class TestCanMultiplexing(AFBTestCase):
         when a multiplexed frame is sent.
         """
         print(
-            f"test_mux_0_signal_event_emitted -----------------------------------------------------------------"
+            "test_mux_0_signal_event_emitted -----------------------------------------------------------------"
         )
         _, msg = _load_mux_message()
         bus = can.interface.Bus(channel=VCAN_IFACE, interface="socketcan")
@@ -236,7 +236,7 @@ class TestCanMultiplexing(AFBTestCase):
 
             expected = {"Bool": True}
             with self.subTest(
-                event=f"test_mux_0_signal_event_emitted", expected=expected
+                event="test_mux_0_signal_event_emitted", expected=expected
             ):
                 signal_path = "open"
                 api_verb = _get_api_verb_name(GROUP_NAME, signal_path)
@@ -358,7 +358,7 @@ class TestCanMultiplexing(AFBTestCase):
         when a multiplexed frame is sent.
         """
         print(
-            f"test_mux_1_signal_event_emitted -----------------------------------------------------------------"
+            "test_mux_1_signal_event_emitted -----------------------------------------------------------------"
         )
         _, msg = _load_mux_message()
         bus = can.interface.Bus(channel=VCAN_IFACE, interface="socketcan")

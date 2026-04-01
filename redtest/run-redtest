@@ -12,7 +12,7 @@ export LD_LIBRARY_PATH="${MAIN_SO_PATH}:${EXAMPLES_SO_PATH}:${LD_LIBRARY_PATH:-}
 # Run your tests (generate .tap file for redpesk)
 echo "--- Start test python hello world binding ---"
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-
+ROOT_DIR=$(dirname "${SCRIPT_DIR}")
 # Create the directory where the logs need to be
 LOG_DIR="${LOG_DIR:-/var/log/redtest/${PACKAGE_NAME}}"
 if ! mkdir -p "${LOG_DIR}" 2>/dev/null || [[ ! -w "${LOG_DIR}" ]]; then
@@ -21,7 +21,8 @@ if ! mkdir -p "${LOG_DIR}" 2>/dev/null || [[ ! -w "${LOG_DIR}" ]]; then
 fi
 export LOG_DIR
 
-COVERAGE_DIR="${COVERAGE_DIR:-/var/log/redtest/${PACKAGE_NAME}/coverage}"
+COVERAGE_DIR="${COVERAGE_DIR:-${LOG_DIR}/coverage}"
+
 rm -fr "${COVERAGE_DIR}"
 if ! mkdir -p "${COVERAGE_DIR}" 2>/dev/null; then
   echo "WARNING: failed to cleanup coverage directory ${COVERAGE_DIR}, using local directory instead"
@@ -111,6 +112,23 @@ echo "Generating html report from merged.profdata"
   -object "${EXAMPLES_SO_PATH}/libafb_bms.so" \
   --output-dir "${COVERAGE_DIR}/html" \
   --ignore-filename-regex='(/\.cargo/registry/|/canbus-core-rs/|/afb-librust/|/target/)'
+
+
+if python3 -m lcov_cobertura --help >/dev/null 2>&1; then
+  echo "lcov_cobertura installed successfully."
+else
+  # Ensure pip is available for python3; install it if missing.
+  if python3 -m pip --version >/dev/null 2>&1; then
+    echo "pip is already available: $(python3 -m pip --version)"
+  else
+    echo "pip missing for python3. Attempting to install..."
+  fi
+  python3 -m pip install  lcov_cobertura
+fi
+COBERTURA_OUTPUT="${LOG_DIR}/coverage.xml"
+
+lcov_cobertura "${LCOV_OUTPUT}" \
+  --output "${COBERTURA_OUTPUT}"
 
 echo "Check if any tests failed (looking for 'not ok' in .tap files)"
 grep -viq '^not ok' ${LOG_DIR}/*.tap

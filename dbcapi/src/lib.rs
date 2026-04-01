@@ -147,141 +147,241 @@ fn signal_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Resu
             return Err(error);
         },
     };
-    // Borrow underlying signal/message instances and pool infos.
-    let mut sig = match ctx.sig_rfc.try_borrow_mut() {
-        Ok(value) => value,
-        Err(_) => {
-            let error = AfbError::new(
-                "fail-borrow-sig",
-                0,
-                "internal pool error (sig rfc cell already used)",
-            );
-            return Err(afb_add_trace!(error));
-        },
-    };
-
-    let msg = match ctx.msg_rfc.try_borrow() {
-        Ok(value) => value,
-        Err(_) => {
-            let error = AfbError::new(
-                "fail-borrow-msg",
-                0,
-                "internal pool error (msg rfc cell already used)",
-            );
-            return Err(afb_add_trace!(error));
-        },
-    };
-
-    let mut msg_info = match ctx.msg_ctx.info.try_borrow_mut() {
-        Ok(value) => value,
-        Err(_) => {
-            let error = AfbError::new(
-                "fail-borrow-info",
-                0,
-                "internal pool error (msg info cell already used)",
-            );
-            return Err(afb_add_trace!(error));
-        },
-    };
-
-    let mut sig_info = match ctx.data.info.try_borrow_mut() {
-        Ok(value) => value,
-        Err(_) => {
-            let error = AfbError::new(
-                "fail-borrow-info",
-                0,
-                "internal pool error (sig info cell already used)",
-            );
-            return Err(afb_add_trace!(error));
-        },
-    };
 
     match action {
         logic::Action::Subscribe => {
             // Subscribe the requester to the signal's event stream.
             ctx.data.event.subscribe(request)?;
-            let rate = jquery.get::<u64>("rate").unwrap_or(msg_info.rate);
-            let watchdog = jquery.get::<u64>("watchdog").unwrap_or(msg_info.watchdog);
+
+            // Take a short immutable snapshot of message-level defaults.
+            let (msg_canid, msg_flag_cur, msg_rate_cur, msg_watchdog_cur, msg_stamp_cur) = {
+                let msg = match ctx.msg_rfc.try_borrow() {
+                    Ok(value) => value,
+                    Err(_) => {
+                        let error = AfbError::new(
+                            "fail-borrow-msg",
+                            0,
+                            "internal pool error (msg rfc cell already used)",
+                        );
+                        return Err(afb_add_trace!(error));
+                    },
+                };
+
+                let msg_info = match ctx.msg_ctx.info.try_borrow() {
+                    Ok(value) => value,
+                    Err(_) => {
+                        let error = AfbError::new(
+                            "fail-borrow-info",
+                            0,
+                            "internal pool error (msg info cell already used)",
+                        );
+                        return Err(afb_add_trace!(error));
+                    },
+                };
+
+                (
+                    msg.get_id(),
+                    msg_info.flag.clone(),
+                    msg_info.rate,
+                    msg_info.watchdog,
+                    msg_info.stamp,
+                )
+            };
+
+            let rate = jquery.get::<u64>("rate").unwrap_or(msg_rate_cur);
+            let watchdog = jquery.get::<u64>("watchdog").unwrap_or(msg_watchdog_cur);
             let flag = jquery
                 .get::<String>("flag")
                 .ok()
                 .and_then(|v| logic::parse_subscribe_flag(&v))
-                .unwrap_or_else(|| msg_info.flag.clone());
+                .unwrap_or_else(|| msg_flag_cur.clone());
 
-            // Persist the effective subscribe flag for this signal (used by should_emit()).
-
-            if flag == SubscribeFlag::ALL {
-                sig_info.flag = SubscribeFlag::ALL;
-            }
-
-            // Update signal throttling if tighter.
-            if rate < sig_info.rate {
-                sig_info.rate = rate
-            }
-            if watchdog < sig_info.watchdog {
-                sig_info.watchdog = watchdog
-            }
-
-            // If message-level subscription parameters need tightening, propagate to sockcan.
-            if msg_info.stamp == 0
-                || watchdog < msg_info.watchdog
-                || rate < msg_info.rate
-                || (flag == SubscribeFlag::ALL && msg_info.flag != SubscribeFlag::ALL)
+            // Update signal-level state in a short mutable scope.
             {
+                let mut sig_info = match ctx.data.info.try_borrow_mut() {
+                    Ok(value) => value,
+                    Err(_) => {
+                        let error = AfbError::new(
+                            "fail-borrow-info",
+                            0,
+                            "internal pool error (sig info cell already used)",
+                        );
+                        return Err(afb_add_trace!(error));
+                    },
+                };
+
+                // Persist the effective subscribe flag for this signal (used by should_emit()).
                 if flag == SubscribeFlag::ALL {
-                    msg_info.flag = SubscribeFlag::ALL;
+                    sig_info.flag = SubscribeFlag::ALL;
                 }
-                if rate < msg_info.rate {
-                    msg_info.rate = rate
+
+                // Update signal throttling if tighter.
+                if rate < sig_info.rate {
+                    sig_info.rate = rate;
                 }
-                if watchdog < msg_info.watchdog {
-                    msg_info.watchdog = watchdog
+                if watchdog < sig_info.watchdog {
+                    sig_info.watchdog = watchdog;
                 }
-                msg_info.stamp = 1;
+
+                sig_info.listeners += 1; // We have at least one listener now.
+            }
+
+            // Decide whether message-level subscription parameters must be tightened.
+            let need_backend_subscribe = msg_stamp_cur == 0
+                || watchdog < msg_watchdog_cur
+                || rate < msg_rate_cur
+                || (flag == SubscribeFlag::ALL && msg_flag_cur != SubscribeFlag::ALL);
+
+            if need_backend_subscribe {
+                let (backend_watchdog, backend_rate, backend_flag) = {
+                    let mut msg_info = match ctx.msg_ctx.info.try_borrow_mut() {
+                        Ok(value) => value,
+                        Err(_) => {
+                            let error = AfbError::new(
+                                "fail-borrow-info",
+                                0,
+                                "internal pool error (msg info cell already used)",
+                            );
+                            return Err(afb_add_trace!(error));
+                        },
+                    };
+
+                    if flag == SubscribeFlag::ALL {
+                        msg_info.flag = SubscribeFlag::ALL;
+                    }
+                    if rate < msg_info.rate {
+                        msg_info.rate = rate;
+                    }
+                    if watchdog < msg_info.watchdog {
+                        msg_info.watchdog = watchdog;
+                    }
+                    msg_info.stamp = 1;
+
+                    (msg_info.watchdog, msg_info.rate, msg_info.flag.clone())
+                };
 
                 AfbSubCall::call_sync(
                     request,
                     ctx.msg_ctx.bcm,
                     "subscribe",
                     SubscribeParam::new(
-                        vec![msg.get_id()],
-                        msg_info.watchdog,
-                        msg_info.rate,
-                        msg_info.flag.clone(),
+                        vec![msg_canid],
+                        backend_watchdog,
+                        backend_rate,
+                        backend_flag,
                     ),
                 )?;
             }
-            sig_info.listeners += 1; // we have at least one listener now
-            request
-                .reply(format!("Subscribe (canid:{}) sig:{} OK", msg.get_id(), sig.get_name(),), 0);
-        },
 
+            let sig_name = {
+                let sig = match ctx.sig_rfc.try_borrow() {
+                    Ok(value) => value,
+                    Err(_) => {
+                        let error = AfbError::new(
+                            "fail-borrow-sig",
+                            0,
+                            "internal pool error (sig rfc cell already used)",
+                        );
+                        return Err(afb_add_trace!(error));
+                    },
+                };
+                sig.get_name().to_string()
+            };
+
+            request.reply(format!("Subscribe (canid:{}) sig:{} OK", msg_canid, sig_name), 0);
+        },
         logic::Action::Unsubscribe => {
-            // Detach the requester from the signal's event stream.
             ctx.data.event.unsubscribe(request)?;
-            request.reply(
-                format!("UnSubscribe (canid:{}) sig:{} OK", msg.get_id(), sig.get_name(),),
-                0,
-            );
+
+            let (msg_canid, sig_name) = {
+                let msg = match ctx.msg_rfc.try_borrow() {
+                    Ok(value) => value,
+                    Err(_) => {
+                        let error = AfbError::new(
+                            "fail-borrow-msg",
+                            0,
+                            "internal pool error (msg rfc cell already used)",
+                        );
+                        return Err(afb_add_trace!(error));
+                    },
+                };
+
+                let sig = match ctx.sig_rfc.try_borrow() {
+                    Ok(value) => value,
+                    Err(_) => {
+                        let error = AfbError::new(
+                            "fail-borrow-sig",
+                            0,
+                            "internal pool error (sig rfc cell already used)",
+                        );
+                        return Err(afb_add_trace!(error));
+                    },
+                };
+
+                (msg.get_id(), sig.get_name().to_string())
+            };
+
+            request.reply(format!("UnSubscribe (canid:{}) sig:{} OK", msg_canid, sig_name), 0);
         },
 
         logic::Action::Read => {
-            // Return the current signal snapshot to the requester.
-            let sig_data = DataBcmSig {
-                name: sig.get_name().to_owned(),
-                stamp: sig.get_stamp(),
-                status: sig.get_status(),
-                value: sig.get_value(),
+            let sig_data = {
+                let sig = match ctx.sig_rfc.try_borrow() {
+                    Ok(value) => value,
+                    Err(_) => {
+                        let error = AfbError::new(
+                            "fail-borrow-sig",
+                            0,
+                            "internal pool error (sig rfc cell already used)",
+                        );
+                        return Err(afb_add_trace!(error));
+                    },
+                };
+
+                DataBcmSig {
+                    name: sig.get_name().to_owned(),
+                    stamp: sig.get_stamp(),
+                    status: sig.get_status(),
+                    value: sig.get_value(),
+                }
             };
+
             let mut params = AfbParams::new();
             params.push(sig_data)?;
             request.reply(params, 0);
         },
 
         logic::Action::Reset => {
-            // Reset signal runtime state in the DBC pool.
-            sig.reset();
-            request.reply(format!("Reset (canid:{}) sig:{} OK", msg.get_id(), sig.get_name(),), 0);
+            let (msg_canid, sig_name) = {
+                let mut sig = match ctx.sig_rfc.try_borrow_mut() {
+                    Ok(value) => value,
+                    Err(_) => {
+                        let error = AfbError::new(
+                            "fail-borrow-sig",
+                            0,
+                            "internal pool error (sig rfc cell already used)",
+                        );
+                        return Err(afb_add_trace!(error));
+                    },
+                };
+
+                let msg = match ctx.msg_rfc.try_borrow() {
+                    Ok(value) => value,
+                    Err(_) => {
+                        let error = AfbError::new(
+                            "fail-borrow-msg",
+                            0,
+                            "internal pool error (msg rfc cell already used)",
+                        );
+                        return Err(afb_add_trace!(error));
+                    },
+                };
+
+                sig.reset();
+                (msg.get_id(), sig.get_name().to_string())
+            };
+
+            request.reply(format!("Reset (canid:{}) sig:{} OK", msg_canid, sig_name), 0);
         },
     };
     Ok(())
@@ -371,7 +471,7 @@ impl CanMsgCtrl for MessagePoolCtx {
         let msg_value =
             DataBcmMsg { canid: msg.get_id(), stamp: msg.get_stamp(), status: msg.get_status() };
 
-        let info = match self.data.info.try_borrow() {
+        let current_flag = match self.data.info.try_borrow() {
             Err(_) => {
                 afb_log_msg!(
                     Critical,
@@ -380,48 +480,51 @@ impl CanMsgCtrl for MessagePoolCtx {
                 );
                 return;
             },
-            Ok(info) => info,
+            Ok(info) => info.flag.clone(),
         };
 
         // Build a parameter pack containing the message snapshot + selected signals.
-        let params = |msg: &dyn CanDbcMessage| -> Result<AfbParams, AfbError> {
-            let mut args = AfbParams::new();
-            args.push(msg_value)?;
+        let params =
+            |msg: &dyn CanDbcMessage, current_flag: SubscribeFlag| -> Result<AfbParams, AfbError> {
+                let mut args = AfbParams::new();
+                args.push(msg_value)?;
 
-            for sig_rfc in msg.get_signals() {
-                let sig = match sig_rfc.try_borrow() {
-                    Ok(value) => value,
-                    Err(_) => {
-                        let error = AfbError::new(
-                            "fail-borrow-sig",
-                            0,
-                            "internal pool error (sig rfc cell already used)",
-                        );
-                        return Err(error);
-                    },
-                };
-                let sig_value = DataBcmSig {
-                    name: sig.get_name().to_string(),
-                    status: sig.get_status(),
-                    stamp: sig.get_stamp(),
-                    value: sig.get_value(),
-                };
-                match info.flag {
-                    SubscribeFlag::NEW => {
-                        if sig.get_status() == CanDataStatus::Updated {
+                for sig_rfc in msg.get_signals() {
+                    let sig = match sig_rfc.try_borrow() {
+                        Ok(value) => value,
+                        Err(_) => {
+                            let error = AfbError::new(
+                                "fail-borrow-sig",
+                                0,
+                                "internal pool error (sig rfc cell already used)",
+                            );
+                            return Err(error);
+                        },
+                    };
+
+                    let sig_value = DataBcmSig {
+                        name: sig.get_name().to_string(),
+                        status: sig.get_status(),
+                        stamp: sig.get_stamp(),
+                        value: sig.get_value(),
+                    };
+
+                    match current_flag {
+                        SubscribeFlag::NEW => {
+                            if sig.get_status() == CanDataStatus::Updated {
+                                args.push(sig_value)?;
+                            }
+                        },
+                        SubscribeFlag::ALL => {
                             args.push(sig_value)?;
-                        }
-                    },
-                    SubscribeFlag::ALL => {
-                        args.push(sig_value)?;
-                    },
+                        },
+                    }
                 }
-            }
 
-            Ok(args)
-        };
+                Ok(args)
+            };
 
-        let args = match params(msg) {
+        let args = match params(msg, current_flag) {
             Err(_) => {
                 afb_log_msg!(
                     Critical,
@@ -433,8 +536,8 @@ impl CanMsgCtrl for MessagePoolCtx {
             Ok(value) => value,
         };
 
-        // Push event; if no more listeners, clear backend subscription.
         let listener = self.data.event.push(args);
+
         if listener + msg.get_listeners() < 1 {
             afb_log_msg!(
                 Notice,
@@ -442,7 +545,6 @@ impl CanMsgCtrl for MessagePoolCtx {
                 format!("msg-empty-listener: clearing canid={} subscription", msg.get_id())
             );
 
-            // No active listener: unsubscribe from backend.
             let _status = AfbSubCall::call_sync(
                 self.data.event.get_apiv4(),
                 self.data.bcm,
@@ -450,7 +552,6 @@ impl CanMsgCtrl for MessagePoolCtx {
                 UnSubscribeParam::new(vec![msg.get_id()]),
             );
 
-            // Reset per-message throttling so the next subscribe recomputes it.
             match self.data.info.try_borrow_mut() {
                 Err(_) => {},
                 Ok(mut info) => {
@@ -480,34 +581,48 @@ fn message_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
         },
     };
 
-    // Borrow the message and its runtime info.
-    let mut msg = match ctx.msg_rfc.try_borrow_mut() {
-        Ok(value) => value,
-        Err(_) => {
-            let error =
-                AfbError::new("fail-borrow-msg", 0, "internal pool error (msg cell already used)");
-            return Err(afb_add_trace!(error));
-        },
-    };
-
-    let mut msg_info = match ctx.data.info.try_borrow_mut() {
-        Ok(value) => value,
-        Err(_) => {
-            let error = AfbError::new(
-                "fail-borrow-info",
-                0,
-                "internal pool error (info cell already used)",
-            );
-            return Err(afb_add_trace!(error));
-        },
-    };
-
     match action {
         logic::Action::Subscribe => {
             ctx.data.event.subscribe(request)?;
 
-            let rate = jquery.get::<u64>("rate").unwrap_or(msg_info.rate);
-            let watchdog = jquery.get::<u64>("watchdog").unwrap_or(msg_info.watchdog);
+            // Take a short immutable snapshot of current message subscription state.
+            let (msg_canid, msg_name, cur_rate, cur_watchdog, cur_flag, cur_stamp) = {
+                let msg = match ctx.msg_rfc.try_borrow() {
+                    Ok(value) => value,
+                    Err(_) => {
+                        let error = AfbError::new(
+                            "fail-borrow-msg",
+                            0,
+                            "internal pool error (msg cell already used)",
+                        );
+                        return Err(afb_add_trace!(error));
+                    },
+                };
+
+                let msg_info = match ctx.data.info.try_borrow() {
+                    Ok(value) => value,
+                    Err(_) => {
+                        let error = AfbError::new(
+                            "fail-borrow-info",
+                            0,
+                            "internal pool error (msg info cell already used)",
+                        );
+                        return Err(afb_add_trace!(error));
+                    },
+                };
+
+                (
+                    msg.get_id(),
+                    msg.get_name().to_string(),
+                    msg_info.rate,
+                    msg_info.watchdog,
+                    msg_info.flag.clone(),
+                    msg_info.stamp,
+                )
+            };
+
+            let rate = jquery.get::<u64>("rate").unwrap_or(cur_rate);
+            let watchdog = jquery.get::<u64>("watchdog").unwrap_or(cur_watchdog);
             let flag = jquery
                 .get::<String>("flag")
                 .ok()
@@ -516,73 +631,131 @@ fn message_vcb(request: &AfbRequest, args: &AfbRqtData, ctx: &AfbCtxData) -> Res
                     "ALL" => Some(SubscribeFlag::ALL),
                     _ => None,
                 })
-                .unwrap_or_else(|| msg_info.flag.clone());
+                .unwrap_or_else(|| cur_flag.clone());
 
-            // If we need to tighten backend subscription, do it now.
-            if msg_info.stamp == 0
-                || watchdog < msg_info.watchdog
-                || rate < msg_info.rate
-                || msg_info.flag != flag
-            {
-                if flag == SubscribeFlag::ALL {
-                    msg_info.flag = SubscribeFlag::ALL;
-                }
-                if rate < msg_info.rate {
-                    msg_info.rate = rate
-                }
-                if watchdog < msg_info.watchdog {
-                    msg_info.watchdog = watchdog
-                }
-                msg_info.stamp = 1;
+            // If we need to tighten backend subscription, update internal state first
+            // in a short mutable scope, then call backend with no borrow alive.
+            let need_backend_subscribe =
+                cur_stamp == 0 || watchdog < cur_watchdog || rate < cur_rate || cur_flag != flag;
+
+            if need_backend_subscribe {
+                let (backend_watchdog, backend_rate, backend_flag) = {
+                    let mut msg_info = match ctx.data.info.try_borrow_mut() {
+                        Ok(value) => value,
+                        Err(_) => {
+                            let error = AfbError::new(
+                                "fail-borrow-info",
+                                0,
+                                "internal pool error (msg info cell already used)",
+                            );
+                            return Err(afb_add_trace!(error));
+                        },
+                    };
+
+                    if flag == SubscribeFlag::ALL {
+                        msg_info.flag = SubscribeFlag::ALL;
+                    } else {
+                        msg_info.flag = flag.clone();
+                    }
+
+                    if rate < msg_info.rate {
+                        msg_info.rate = rate;
+                    }
+                    if watchdog < msg_info.watchdog {
+                        msg_info.watchdog = watchdog;
+                    }
+
+                    msg_info.stamp = 1;
+
+                    (msg_info.watchdog, msg_info.rate, msg_info.flag.clone())
+                };
 
                 AfbSubCall::call_sync(
                     request,
                     ctx.data.bcm,
                     "subscribe",
                     SubscribeParam::new(
-                        vec![msg.get_id()],
-                        msg_info.watchdog,
-                        msg_info.rate,
-                        msg_info.flag.clone(),
+                        vec![msg_canid],
+                        backend_watchdog,
+                        backend_rate,
+                        backend_flag,
                     ),
                 )?;
             }
-            request
-                .reply(format!("Subscribe (canid:{}) msg:{} OK", msg.get_id(), msg.get_name(),), 0);
-        },
 
+            request.reply(format!("Subscribe (canid:{}) msg:{} OK", msg_canid, msg_name), 0);
+        },
         logic::Action::Unsubscribe => {
             ctx.data.event.unsubscribe(request)?;
-            request.reply(
-                format!("UnSubscribe (canid:{}) msg:{} OK", msg.get_id(), msg.get_name(),),
-                0,
-            );
+
+            let (msg_canid, msg_name) = {
+                let msg = match ctx.msg_rfc.try_borrow() {
+                    Ok(value) => value,
+                    Err(_) => {
+                        let error = AfbError::new(
+                            "fail-borrow-msg",
+                            0,
+                            "internal pool error (msg cell already used)",
+                        );
+                        return Err(afb_add_trace!(error));
+                    },
+                };
+
+                (msg.get_id(), msg.get_name().to_string())
+            };
+
+            request.reply(format!("UnSubscribe (canid:{}) msg:{} OK", msg_canid, msg_name), 0);
         },
 
         logic::Action::Read => {
-            // Return current message snapshot.
-            let msg_data = DataBcmMsg {
-                canid: msg.get_id(),
-                stamp: msg.get_stamp(),
-                status: msg.get_status(),
+            let msg_data = {
+                let msg = match ctx.msg_rfc.try_borrow() {
+                    Ok(value) => value,
+                    Err(_) => {
+                        let error = AfbError::new(
+                            "fail-borrow-msg",
+                            0,
+                            "internal pool error (msg cell already used)",
+                        );
+                        return Err(afb_add_trace!(error));
+                    },
+                };
+
+                DataBcmMsg { canid: msg.get_id(), stamp: msg.get_stamp(), status: msg.get_status() }
             };
+
             let mut params = AfbParams::new();
             params.push(msg_data)?;
             request.reply(params, 0);
         },
 
-        logic::Action::Reset => match msg.reset() {
-            Err(_) => {
-                return Err(AfbError::new(
-                    "reset-msg-fail",
-                    0,
-                    "internal pool (fail to get borrow mut)",
-                ))
-            },
-            Ok(()) => {
-                request
-                    .reply(format!("Reset (canid:{}) msg:{} OK", msg.get_id(), msg.get_name(),), 0);
-            },
+        logic::Action::Reset => {
+            let (msg_canid, msg_name) = {
+                let mut msg = match ctx.msg_rfc.try_borrow_mut() {
+                    Ok(value) => value,
+                    Err(_) => {
+                        let error = AfbError::new(
+                            "fail-borrow-msg",
+                            0,
+                            "internal pool error (msg cell already used)",
+                        );
+                        return Err(afb_add_trace!(error));
+                    },
+                };
+
+                match msg.reset() {
+                    Err(_) => {
+                        return Err(AfbError::new(
+                            "reset-msg-fail",
+                            0,
+                            "internal pool (fail to get borrow mut)",
+                        ))
+                    },
+                    Ok(()) => (msg.get_id(), msg.get_name().to_string()),
+                }
+            };
+
+            request.reply(format!("Reset (canid:{}) msg:{} OK", msg_canid, msg_name), 0);
         },
     };
     Ok(())
