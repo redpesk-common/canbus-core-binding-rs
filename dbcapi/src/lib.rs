@@ -39,7 +39,6 @@ use sockcan::prelude::{
 
 use sockdata::types::{
     sockdata_register, CanBcmData, DataBcmMsg, DataBcmSig, SubscribeFlag, SubscribeParam,
-    UnSubscribeParam,
 };
 
 use std::cell::RefCell;
@@ -536,31 +535,9 @@ impl CanMsgCtrl for MessagePoolCtx {
             Ok(value) => value,
         };
 
-        let listener = self.data.event.push(args);
-
-        if listener + msg.get_listeners() < 1 {
-            afb_log_msg!(
-                Notice,
-                self.data.event,
-                format!("msg-empty-listener: clearing canid={} subscription", msg.get_id())
-            );
-
-            let _status = AfbSubCall::call_sync(
-                self.data.event.get_apiv4(),
-                self.data.bcm,
-                "unsubscribe",
-                UnSubscribeParam::new(vec![msg.get_id()]),
-            );
-
-            match self.data.info.try_borrow_mut() {
-                Err(_) => {},
-                Ok(mut info) => {
-                    info.stamp = 0;
-                    info.rate = 0;
-                    info.watchdog = 0;
-                },
-            }
-        }
+        // Do not infer durable subscriptions from the current frame.
+        // Multiplexed messages may update a mux branch with no subscribed signal.
+        let _listener = self.data.event.push(args);
     }
 }
 
