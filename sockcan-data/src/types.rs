@@ -24,7 +24,6 @@
 // Import libafb dependencies and serde for JSON (de)serialization.
 use afbv4::prelude::*;
 use serde::{Deserialize, Serialize};
-
 use sockcan::prelude::{CanBcmOpCode, CanDataStatus, CanDbcType};
 
 // Automatically generate JSON encoder/decoder and AFB registration glue
@@ -81,6 +80,7 @@ pub struct CanBcmData {
     pub data: Vec<u8>,
 }
 
+
 AfbDataConverter!(bcm_msg, DataBcmMsg);
 
 /// Short BCM message metadata used for certain notifications and logging.
@@ -112,6 +112,7 @@ pub struct DataBcmSig {
 impl CanBcmData {
     /// Construct a new BCM data record from low-level CAN parameters.
     pub fn new(canid: u32, opcode: CanBcmOpCode, stamp: u64, data: Vec<u8>, len: u8) -> Self {
+
         CanBcmData { canid, len, stamp, opcode, data }
     }
 
@@ -138,6 +139,48 @@ impl CanBcmData {
     /// Return a reference to the raw CAN payload bytes.
     pub fn get_data(&self) -> &Vec<u8> {
         &self.data
+    }
+}
+
+/// Borrow a `CanBcmData` event payload only for the duration of `func`.
+///
+/// This avoids the long-lived `args.get::<&CanBcmData>()` path and uses
+/// `AfbRqtData::with_ro()`, which releases the temporary converted `afb_data_t`
+/// immediately after the closure returns.
+pub fn with_can_bcm_data<T, F>(args: &AfbRqtData, index: usize, func: F) -> Result<T, AfbError>
+where
+    F: FnOnce(&CanBcmData) -> Result<T, AfbError>,
+{
+    let converter_box = &raw const bcm_data::CONVERTER_BOX;
+    let typev4 = match unsafe { &*converter_box } {
+        ConverterBox(None) => {
+            return Err(AfbError::new(
+                "bcm-data-converter",
+                0,
+                "bcm_data converter is not registered",
+            ));
+        },
+        ConverterBox(Some(value)) => value.typev4,
+    };
+
+    match args.with_ro(typev4, index, |cbuffer| {
+        if cbuffer.is_null() {
+            return Err(AfbError::new(
+                "bcm-data-import",
+                0,
+                format!("null CanBcmData pointer args[{}]", index),
+            ));
+        }
+
+        let data = unsafe { &*(cbuffer as *const CanBcmData) };
+        func(data)
+    }) {
+        None => Err(AfbError::new(
+            "bcm-data-import",
+            0,
+            format!("invalid custom converter format args[{}]", index),
+        )),
+        Some(result) => result,
     }
 }
 
