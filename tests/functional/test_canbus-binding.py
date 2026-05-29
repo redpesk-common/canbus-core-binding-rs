@@ -19,7 +19,11 @@
 from __future__ import annotations
 
 import argparse
+import csv
+from contextlib import nullcontext
+from datetime import datetime, timezone
 import enum
+import gc
 import json
 import logging
 import os
@@ -58,6 +62,53 @@ VCAN_IFACE = os.environ.get("VCAN_IFACE", "vcan0")
 bindings: Dict[str, str] = {}
 config: Dict[str, Dict[str, Any]] = {}
 
+
+def _env_int(name: str, default: int, *, min_value: Optional[int] = None) -> int:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw, 0)
+    except ValueError:
+        LOG.warning("Invalid integer value for %s=%r, using %d", name, raw, default)
+        return default
+    if min_value is not None and value < min_value:
+        LOG.warning("Invalid value for %s=%r, using %d", name, raw, default)
+        return default
+    return value
+
+
+def _env_float(name: str, default: Optional[float] = None) -> Optional[float]:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        LOG.warning("Invalid float value for %s=%r, using %s", name, raw, default)
+        return default
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() in {"1", "yes", "true", "on", "y"}
+
+
+def _env_path(name: str) -> Optional[Path]:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return None
+    return Path(raw).expanduser()
+
+
+def _mib_to_bytes(value_mib: Optional[float]) -> Optional[int]:
+    if value_mib is None:
+        return None
+    return int(value_mib * 1024 * 1024)
+
+
 # -----------------------------------------------------------------------------
 # Test selection / parameters
 # -----------------------------------------------------------------------------
@@ -65,8 +116,26 @@ config: Dict[str, Dict[str, Any]] = {}
 _canids: Optional[Iterable[int]] = None
 # _canids = (526,)  # Uncomment to focus locally.
 
-RANDOM_SEED = int(os.environ.get("TEST_SEED", time.time()))
+RANDOM_SEED = _env_int("TEST_SEED", int(time.time()))
 ALLOWED_CANIDS: Optional[Set[int]] = None
+
+SCENARIO_LOOPS = _env_int("TEST_SCENARIO_LOOPS", 1, min_value=1)
+MEMORY_REPORT_EVERY = _env_int("TEST_MEMORY_REPORT_EVERY", 1, min_value=0)
+MEMORY_PID: Optional[int] = (
+    _env_int("TEST_MEMORY_PID", os.getpid(), min_value=1)
+    if os.environ.get("TEST_MEMORY_PID")
+    else None
+)
+FAIL_ON_RSS_GROWTH_BYTES = _mib_to_bytes(_env_float("TEST_FAIL_ON_RSS_GROWTH_MIB"))
+GC_BETWEEN_LOOPS = _env_bool("TEST_GC_BETWEEN_LOOPS", False)
+LOOP_DELAY_MS = _env_int("TEST_LOOP_DELAY_MS", 0, min_value=0)
+VARY_SEED_PER_LOOP = _env_bool("TEST_VARY_SEED_PER_LOOP", False)
+
+METRICS_LOG_FILE = _env_path("TEST_METRICS_LOG_FILE")
+METRICS_LOG_FORMAT = os.environ.get("TEST_METRICS_LOG_FORMAT", "csv").strip().lower()
+METRICS_LOG_APPEND = _env_bool("TEST_METRICS_LOG_APPEND", False)
+METRICS_LOG_FLUSH = _env_bool("TEST_METRICS_LOG_FLUSH", True)
+METRICS_LOG_EVERY = _env_int("TEST_METRICS_LOG_EVERY", 1, min_value=0)
 
 
 def _setup_logging(*, quiet: bool, verbose: bool, debug: bool) -> None:
@@ -302,6 +371,358 @@ def _parse_canids_env() -> Optional[Set[int]]:
             continue
         canids.add(_parse_int_token(t))
     return canids
+
+
+# -----------------------------------------------------------------------------
+# Runtime diagnostics
+# -----------------------------------------------------------------------------
+
+_MEMORY_BYTE_KEYS = {
+    "VmPeak",
+    "VmSize",
+    "VmLck",
+    "VmPin",
+    "VmHWM",
+    "VmRSS",
+    "RssAnon",
+    "RssFile",
+    "RssShmem",
+    "VmData",
+    "VmStk",
+    "VmExe",
+    "VmLib",
+    "VmPTE",
+    "VmSwap",
+}
+
+_MEMORY_INT_KEYS = {"Threads", "FDSize"}
+
+
+def _format_bytes(value: Optional[int]) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value / (1024 * 1024):.1f} MiB"
+
+
+def _format_signed_bytes(value: Optional[int]) -> str:
+    if value is None:
+        return "n/a"
+    sign = "+" if value >= 0 else "-"
+    return f"{sign}{abs(value) / (1024 * 1024):.1f} MiB"
+
+
+def _read_proc_status(pid: int) -> Dict[str, Any]:
+    status_path = Path("/proc") / str(pid) / "status"
+    stats: Dict[str, Any] = {}
+    try:
+        for line in status_path.read_text(encoding="utf-8").splitlines():
+            if ":" not in line:
+                continue
+            key, raw_value = line.split(":", 1)
+            value = raw_value.strip()
+            if key in _MEMORY_BYTE_KEYS:
+                parts = value.split()
+                if parts and parts[0].isdigit():
+                    stats[key] = int(parts[0]) * 1024
+            elif key in _MEMORY_INT_KEYS:
+                parts = value.split()
+                if parts and parts[0].isdigit():
+                    stats[key] = int(parts[0])
+            elif key in {"Name", "State"}:
+                stats[key] = value
+    except OSError as exc:
+        stats["error"] = str(exc)
+    return stats
+
+
+def _count_open_fds(pid: int) -> Optional[int]:
+    fd_dir = Path("/proc") / str(pid) / "fd"
+    try:
+        return sum(1 for _ in fd_dir.iterdir())
+    except OSError:
+        return None
+
+
+def _memory_snapshot(pid: int) -> Dict[str, Any]:
+    snapshot = _read_proc_status(pid)
+    snapshot["pid"] = pid
+    snapshot["fds"] = _count_open_fds(pid)
+    snapshot["timestamp"] = time.time()
+    return snapshot
+
+
+def _format_memory_snapshot(
+    snapshot: Dict[str, Any], baseline: Optional[Dict[str, Any]] = None
+) -> str:
+    parts = [f"pid={snapshot.get('pid')}"]
+    name = snapshot.get("Name")
+    if name:
+        parts.append(f"name={name}")
+    state = snapshot.get("State")
+    if state:
+        parts.append(f"state={state}")
+
+    parts.extend(
+        [
+            f"rss={_format_bytes(snapshot.get('VmRSS'))}",
+            f"hwm={_format_bytes(snapshot.get('VmHWM'))}",
+            f"vmsize={_format_bytes(snapshot.get('VmSize'))}",
+            f"data={_format_bytes(snapshot.get('VmData'))}",
+            f"rss_anon={_format_bytes(snapshot.get('RssAnon'))}",
+            f"rss_file={_format_bytes(snapshot.get('RssFile'))}",
+        ]
+    )
+
+    threads = snapshot.get("Threads")
+    if threads is not None:
+        parts.append(f"threads={threads}")
+
+    fds = snapshot.get("fds")
+    if fds is not None:
+        parts.append(f"fds={fds}")
+
+    if baseline is not None:
+        rss = snapshot.get("VmRSS")
+        base_rss = baseline.get("VmRSS")
+        data = snapshot.get("VmData")
+        base_data = baseline.get("VmData")
+        if isinstance(rss, int) and isinstance(base_rss, int):
+            parts.append(f"rss_delta={_format_signed_bytes(rss - base_rss)}")
+        if isinstance(data, int) and isinstance(base_data, int):
+            parts.append(f"data_delta={_format_signed_bytes(data - base_data)}")
+
+    error = snapshot.get("error")
+    if error:
+        parts.append(f"error={error}")
+
+    return " ".join(parts)
+
+
+_METRICS_FIELDS = [
+    "timestamp_iso",
+    "timestamp_unix",
+    "event",
+    "loop_index",
+    "loop_total",
+    "elapsed_s",
+    "seed",
+    "pid",
+    "proc_name",
+    "proc_state",
+    "can_api",
+    "vcan_iface",
+    "dbc_file",
+    "canids",
+    "vmrss_bytes",
+    "vmhwm_bytes",
+    "vmsize_bytes",
+    "vmdata_bytes",
+    "rssanon_bytes",
+    "rssfile_bytes",
+    "threads",
+    "fds",
+    "vmrss_delta_bytes",
+    "vmdata_delta_bytes",
+    "vmrss_mib",
+    "vmhwm_mib",
+    "vmsize_mib",
+    "vmdata_mib",
+    "rssanon_mib",
+    "rssfile_mib",
+    "vmrss_delta_mib",
+    "vmdata_delta_mib",
+    "messages",
+    "signals",
+    "subscribed",
+    "events",
+    "encode_errors",
+    "overflow_errors",
+    "unknown_verbs",
+    "skipped",
+]
+
+
+def _bytes_to_mib(value: Optional[int]) -> Optional[float]:
+    if value is None:
+        return None
+    return round(value / (1024 * 1024), 3)
+
+
+def _metric_bytes(snapshot: Dict[str, Any], key: str) -> Optional[int]:
+    value = snapshot.get(key)
+    return value if isinstance(value, int) else None
+
+
+def _build_metrics_record(
+    *,
+    event: str,
+    snapshot: Dict[str, Any],
+    baseline: Optional[Dict[str, Any]] = None,
+    stats: Optional[Dict[str, int]] = None,
+    elapsed_s: Optional[float] = None,
+    loop_index: Optional[int] = None,
+    loop_total: Optional[int] = None,
+    seed: Optional[int] = None,
+) -> Dict[str, Any]:
+    timestamp = float(snapshot.get("timestamp", time.time()))
+    vmrss = _metric_bytes(snapshot, "VmRSS")
+    vmhwm = _metric_bytes(snapshot, "VmHWM")
+    vmsize = _metric_bytes(snapshot, "VmSize")
+    vmdata = _metric_bytes(snapshot, "VmData")
+    rssanon = _metric_bytes(snapshot, "RssAnon")
+    rssfile = _metric_bytes(snapshot, "RssFile")
+
+    vmrss_delta: Optional[int] = None
+    vmdata_delta: Optional[int] = None
+    if baseline is not None:
+        base_rss = _metric_bytes(baseline, "VmRSS")
+        base_data = _metric_bytes(baseline, "VmData")
+        if vmrss is not None and base_rss is not None:
+            vmrss_delta = vmrss - base_rss
+        if vmdata is not None and base_data is not None:
+            vmdata_delta = vmdata - base_data
+
+    record: Dict[str, Any] = {
+        "timestamp_iso": datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat(),
+        "timestamp_unix": round(timestamp, 6),
+        "event": event,
+        "loop_index": loop_index,
+        "loop_total": loop_total,
+        "elapsed_s": round(elapsed_s, 6) if elapsed_s is not None else None,
+        "seed": seed,
+        "pid": snapshot.get("pid"),
+        "proc_name": snapshot.get("Name"),
+        "proc_state": snapshot.get("State"),
+        "can_api": CAN_API,
+        "vcan_iface": VCAN_IFACE,
+        "dbc_file": str(DBC_FILE),
+        "canids": _format_canids_filter(),
+        "vmrss_bytes": vmrss,
+        "vmhwm_bytes": vmhwm,
+        "vmsize_bytes": vmsize,
+        "vmdata_bytes": vmdata,
+        "rssanon_bytes": rssanon,
+        "rssfile_bytes": rssfile,
+        "threads": snapshot.get("Threads"),
+        "fds": snapshot.get("fds"),
+        "vmrss_delta_bytes": vmrss_delta,
+        "vmdata_delta_bytes": vmdata_delta,
+        "vmrss_mib": _bytes_to_mib(vmrss),
+        "vmhwm_mib": _bytes_to_mib(vmhwm),
+        "vmsize_mib": _bytes_to_mib(vmsize),
+        "vmdata_mib": _bytes_to_mib(vmdata),
+        "rssanon_mib": _bytes_to_mib(rssanon),
+        "rssfile_mib": _bytes_to_mib(rssfile),
+        "vmrss_delta_mib": _bytes_to_mib(vmrss_delta),
+        "vmdata_delta_mib": _bytes_to_mib(vmdata_delta),
+    }
+
+    if stats is not None:
+        record.update(stats)
+
+    return record
+
+
+class _MetricsLogger:
+    def __init__(
+        self,
+        path: Path,
+        *,
+        log_format: str,
+        append: bool,
+        flush: bool,
+    ) -> None:
+        self.path = path
+        self.log_format = log_format
+        self.append = append
+        self.flush = flush
+        self._file: Optional[Any] = None
+        self._writer: Optional[csv.DictWriter] = None
+
+    def __enter__(self) -> "_MetricsLogger":
+        if self.log_format not in {"csv", "jsonl"}:
+            raise ValueError(
+                f"Unsupported metrics log format: {self.log_format}. "
+                "Expected 'csv' or 'jsonl'."
+            )
+
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        mode = "a" if self.append else "w"
+        newline = "" if self.log_format == "csv" else None
+        self._file = self.path.open(mode, encoding="utf-8", newline=newline)
+
+        if self.log_format == "csv":
+            self._writer = csv.DictWriter(
+                self._file, fieldnames=_METRICS_FIELDS, extrasaction="ignore"
+            )
+            should_write_header = (
+                not self.append
+                or not self.path.exists()
+                or self.path.stat().st_size == 0
+            )
+            if should_write_header:
+                self._writer.writeheader()
+
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        if self._file is not None:
+            self._file.close()
+        self._file = None
+        self._writer = None
+
+    def write(self, record: Dict[str, Any]) -> None:
+        if self._file is None:
+            return
+
+        if self.log_format == "jsonl":
+            self._file.write(json.dumps(record, sort_keys=True) + "\n")
+        else:
+            assert self._writer is not None
+            self._writer.writerow(
+                {field: record.get(field) for field in _METRICS_FIELDS}
+            )
+
+        if self.flush:
+            self._file.flush()
+
+
+def _should_write_metrics_loop(loop_index: int, loop_total: int) -> bool:
+    if METRICS_LOG_FILE is None or METRICS_LOG_EVERY <= 0:
+        return False
+    return (
+        loop_index == 1
+        or loop_index == loop_total
+        or loop_index % METRICS_LOG_EVERY == 0
+    )
+
+
+def _format_canids_filter() -> str:
+    if ALLOWED_CANIDS is None:
+        return "all"
+    return ",".join(f"0x{x:X}" for x in sorted(ALLOWED_CANIDS))
+
+
+def _new_scenario_stats() -> Dict[str, int]:
+    return {
+        "messages": 0,
+        "signals": 0,
+        "subscribed": 0,
+        "events": 0,
+        "encode_errors": 0,
+        "overflow_errors": 0,
+        "unknown_verbs": 0,
+        "skipped": 0,
+    }
+
+
+def _merge_scenario_stats(dst: Dict[str, int], src: Dict[str, int]) -> None:
+    for key, value in src.items():
+        dst[key] = dst.get(key, 0) + value
+
+
+def _format_scenario_stats(stats: Dict[str, int]) -> str:
+    return " ".join(f"{key}={value}" for key, value in sorted(stats.items()))
 
 
 # -----------------------------------------------------------------------------
@@ -869,97 +1290,237 @@ class TestBindingDbcGenerated(AFBTestCase):
         )
         assert r.args == ()
 
+    def _run_dbc_random_signal_scenario(
+        self, db: Any, bus: can.Bus, rng: random.Random
+    ) -> Dict[str, int]:
+        stats = _new_scenario_stats()
+
+        for msg in db.messages:
+            canid = msg.frame_id
+            if ALLOWED_CANIDS is not None and canid not in ALLOWED_CANIDS:
+                continue
+
+            stats["messages"] += 1
+            msg_name = msg.name
+            is_extended = bool(msg.is_extended_frame)
+
+            for sig in msg.signals:
+                stats["signals"] += 1
+                sig_name = sig.name
+
+                if sig.is_multiplexer:
+                    valid = _valid_mux_ids_for_message(msg)
+                    candidate = rng.choice(valid) if valid else _safe_default_value(sig)
+                else:
+                    candidate = _pick_random_value(sig, rng)
+
+                values = _build_values_for_message(msg, sig, candidate, rng)
+
+                try:
+                    data = _encode_message(msg, values)
+                except cantools.database.errors.EncodeError as e:
+                    stats["encode_errors"] += 1
+                    stats["skipped"] += 1
+                    LOG.warning(
+                        f"[AFB] Encode error canid={canid} msg={msg_name} sig={sig_name}: {e}"
+                    )
+                    continue
+                except OverflowError as e:
+                    stats["overflow_errors"] += 1
+                    stats["skipped"] += 1
+                    LOG.info(
+                        f"[AFB] Encode overflow canid={canid} msg={msg_name} sig={sig_name}: {e}"
+                    )
+                    continue
+
+                decoded = _decode_message(msg, data)
+                expected = decoded.get(sig_name, candidate)
+                if _is_boolean_signal(sig):
+                    expected = bool(expected)
+                expected_norm = _normalize_scalar(expected)
+
+                case_label = (
+                    f"canid={canid} msg={msg_name} "
+                    f"sig={sig_name} expected={expected_norm}"
+                )
+
+                try:
+                    verb = _subscribe_signal(self.binder, msg_name, sig_name)
+                except Exception as e:
+                    if _is_unknown_verb_error(e):
+                        stats["unknown_verbs"] += 1
+                        stats["skipped"] += 1
+                        cc_msg = to_upper_camel_case(msg_name)
+                        cc_sig = to_upper_camel_case(sig_name)
+                        LOG.debug(
+                            f"[AFB] Skip unknown verb for canid={canid} "
+                            f"msg={msg_name}({cc_msg}) sig={sig_name}({cc_sig})"
+                        )
+                        continue
+                    LOG.error("[AFB] Subscribe failed: %s", case_label)
+                    raise
+
+                stats["subscribed"] += 1
+                try:
+                    with self.assertEventEmitted(
+                        CAN_API,
+                        verb,
+                        timeout_ms=5000,
+                        value=expected_norm,
+                        value_lambda=lambda payload: _normalize_scalar(
+                            _extract_event_value(payload)
+                        ),
+                    ):
+                        _send_frame(bus, canid, data, is_extended)
+                    stats["events"] += 1
+                except EventAssertionError as e:
+                    LOG.error("[AFB] EventAssertionError %s", case_label)
+                    LOG.error(f"[AFB] Values used for encode: {values}")
+                    LOG.error(f"[AFB] Encoded bytes: {data.hex()}")
+                    raise EventAssertionError(f"{case_label}: {e}") from e
+                finally:
+                    _unsubscribe_signal(self.binder, msg_name, sig_name)
+
+        return stats
+
     def test_dbc_random_signal_events(self) -> None:
         if not DBC_FILE.exists():
             raise FileNotFoundError(f"Missing DBC file: {DBC_FILE}")
 
-        rng = random.Random(RANDOM_SEED)
         db = cantools.database.load_file(str(DBC_FILE))
         bus = can.interface.Bus(channel=VCAN_IFACE, interface="socketcan")
+        memory_pid = MEMORY_PID or os.getpid()
+        overall_stats = _new_scenario_stats()
+        overall_start = time.monotonic()
+        overall_before = _memory_snapshot(memory_pid)
 
-        tested = 0
+        print(
+            "# [scenario] "
+            f"pid={memory_pid} loops={SCENARIO_LOOPS} "
+            f"seed={RANDOM_SEED} vary_seed={VARY_SEED_PER_LOOP} "
+            f"can_api={CAN_API} vcan={VCAN_IFACE} "
+            f"dbc={DBC_FILE} canids={_format_canids_filter()}"
+        )
+        print(f"# [mem] before: {_format_memory_snapshot(overall_before)}")
+        metrics_logger: Optional[_MetricsLogger] = None
+        if METRICS_LOG_FILE is not None:
+            metrics_logger = _MetricsLogger(
+                METRICS_LOG_FILE,
+                log_format=METRICS_LOG_FORMAT,
+                append=METRICS_LOG_APPEND,
+                flush=METRICS_LOG_FLUSH,
+            )
+            print(
+                "# [metrics] "
+                f"file={METRICS_LOG_FILE} format={METRICS_LOG_FORMAT} "
+                f"append={METRICS_LOG_APPEND} every={METRICS_LOG_EVERY}"
+            )
+
+        total_elapsed = 0.0
+        overall_after: Dict[str, Any] = overall_before
+
         try:
-            for msg in db.messages:
-                canid = msg.frame_id
-                if ALLOWED_CANIDS is not None and canid not in ALLOWED_CANIDS:
-                    continue
-
-                msg_name = msg.name
-                is_extended = bool(msg.is_extended_frame)
-
-                for sig in msg.signals:
-                    sig_name = sig.name
-
-                    if sig.is_multiplexer:
-                        valid = _valid_mux_ids_for_message(msg)
-                        candidate = (
-                            rng.choice(valid) if valid else _safe_default_value(sig)
+            with metrics_logger if metrics_logger is not None else nullcontext():
+                if metrics_logger is not None:
+                    metrics_logger.write(
+                        _build_metrics_record(
+                            event="start",
+                            snapshot=overall_before,
+                            loop_total=SCENARIO_LOOPS,
+                            seed=RANDOM_SEED,
+                            elapsed_s=0.0,
                         )
-                    else:
-                        candidate = _pick_random_value(sig, rng)
+                    )
 
-                    values = _build_values_for_message(msg, sig, candidate, rng)
+                for loop_index in range(1, SCENARIO_LOOPS + 1):
+                    if GC_BETWEEN_LOOPS:
+                        gc.collect()
 
-                    try:
-                        data = _encode_message(msg, values)
-                    except cantools.database.errors.EncodeError as e:
-                        LOG.warning(
-                            f"[AFB] Encode error canid={canid} msg={msg_name} sig={sig_name}: {e}"
-                        )
-                        continue
-                    except OverflowError as e:
-                        LOG.info(
-                            f"[AFB] Encode overflow canid={canid} msg={msg_name} sig={sig_name}: {e}"
-                        )
-                        continue
+                    loop_seed = (
+                        RANDOM_SEED + loop_index - 1
+                        if VARY_SEED_PER_LOOP
+                        else RANDOM_SEED
+                    )
+                    rng = random.Random(loop_seed)
+                    loop_before = _memory_snapshot(memory_pid)
+                    loop_start = time.monotonic()
 
-                    decoded = _decode_message(msg, data)
-                    expected = decoded.get(sig_name, candidate)
-                    if _is_boolean_signal(sig):
-                        expected = bool(expected)
-                    expected_norm = _normalize_scalar(expected)
+                    stats = self._run_dbc_random_signal_scenario(db, bus, rng)
+                    _merge_scenario_stats(overall_stats, stats)
 
-                    with self.subTest(
-                        canid=canid, msg=msg_name, sig=sig_name, expected=expected_norm
+                    elapsed = time.monotonic() - loop_start
+                    loop_after = _memory_snapshot(memory_pid)
+
+                    if MEMORY_REPORT_EVERY > 0 and (
+                        loop_index == 1
+                        or loop_index == SCENARIO_LOOPS
+                        or loop_index % MEMORY_REPORT_EVERY == 0
                     ):
-                        try:
-                            verb = _subscribe_signal(self.binder, msg_name, sig_name)
-                        except Exception as e:
-                            if _is_unknown_verb_error(e):
-                                cc_msg = to_upper_camel_case(msg_name)
-                                cc_sig = to_upper_camel_case(sig_name)
-                                LOG.debug(
-                                    f"[AFB] Skip unknown verb for canid={canid} "
-                                    f"msg={msg_name}({cc_msg}) sig={sig_name}({cc_sig})"
-                                )
-                                continue
-                            LOG.error("[AFB] unknown verb -------------------")
-                            raise
+                        print(
+                            f"# [loop {loop_index}/{SCENARIO_LOOPS}] "
+                            f"elapsed={elapsed:.3f}s seed={loop_seed} "
+                            f"{_format_scenario_stats(stats)}"
+                        )
+                        print(
+                            f"# [mem] loop {loop_index}: "
+                            f"{_format_memory_snapshot(loop_after, loop_before)}"
+                        )
 
-                        try:
-                            with self.assertEventEmitted(
-                                CAN_API,
-                                verb,
-                                timeout_ms=5000,
-                                value=expected_norm,
-                                value_lambda=lambda payload: _normalize_scalar(
-                                    _extract_event_value(payload)
-                                ),
-                            ):
-                                _send_frame(bus, canid, data, is_extended)
-                        except EventAssertionError:
-                            LOG.error(
-                                f"[AFB] EventAssertionError canid={canid} msg={msg_name} sig={sig_name} expected={expected_norm}"
+                    if metrics_logger is not None and _should_write_metrics_loop(
+                        loop_index, SCENARIO_LOOPS
+                    ):
+                        metrics_logger.write(
+                            _build_metrics_record(
+                                event="loop",
+                                snapshot=loop_after,
+                                baseline=loop_before,
+                                stats=stats,
+                                elapsed_s=elapsed,
+                                loop_index=loop_index,
+                                loop_total=SCENARIO_LOOPS,
+                                seed=loop_seed,
                             )
-                            LOG.error(f"[AFB] Values used for encode: {values}")
-                            LOG.error(f"[AFB] Encoded bytes: {data.hex()}")
-                            raise
-                        finally:
-                            _unsubscribe_signal(self.binder, msg_name, sig_name)
+                        )
 
-                tested += 1
+                    if LOOP_DELAY_MS > 0 and loop_index < SCENARIO_LOOPS:
+                        time.sleep(LOOP_DELAY_MS / 1000.0)
+
+                total_elapsed = time.monotonic() - overall_start
+                overall_after = _memory_snapshot(memory_pid)
+                if metrics_logger is not None:
+                    metrics_logger.write(
+                        _build_metrics_record(
+                            event="summary",
+                            snapshot=overall_after,
+                            baseline=overall_before,
+                            stats=overall_stats,
+                            elapsed_s=total_elapsed,
+                            loop_total=SCENARIO_LOOPS,
+                            seed=RANDOM_SEED,
+                        )
+                    )
         finally:
             bus.shutdown()
+
+        print(
+            f"# [summary] elapsed={total_elapsed:.3f}s "
+            f"{_format_scenario_stats(overall_stats)}"
+        )
+        print(
+            f"# [mem] after: {_format_memory_snapshot(overall_after, overall_before)}"
+        )
+
+        if FAIL_ON_RSS_GROWTH_BYTES is not None:
+            before_rss = overall_before.get("VmRSS")
+            after_rss = overall_after.get("VmRSS")
+            if isinstance(before_rss, int) and isinstance(after_rss, int):
+                growth = after_rss - before_rss
+                if growth > FAIL_ON_RSS_GROWTH_BYTES:
+                    raise AssertionError(
+                        "RSS memory growth exceeded threshold: "
+                        f"growth={_format_signed_bytes(growth)} "
+                        f"threshold={_format_bytes(FAIL_ON_RSS_GROWTH_BYTES)}"
+                    )
 
 
 if __name__ == "__main__":
@@ -1005,6 +1566,116 @@ if __name__ == "__main__":
             "Use 'none' to disable defaults."
         ),
     )
+    p.add_argument(
+        "--loops",
+        dest="loops",
+        type=int,
+        default=SCENARIO_LOOPS,
+        help=(
+            "Replay the DBC signal scenario N times in the same binder process. "
+            "Default: TEST_SCENARIO_LOOPS or 1."
+        ),
+    )
+    p.add_argument(
+        "--memory-report-every",
+        dest="memory_report_every",
+        type=int,
+        default=MEMORY_REPORT_EVERY,
+        help=(
+            "Print memory diagnostics every N loops. Use 0 to keep only before/after. "
+            "Default: TEST_MEMORY_REPORT_EVERY or 1."
+        ),
+    )
+    p.add_argument(
+        "--memory-pid",
+        dest="memory_pid",
+        type=int,
+        default=MEMORY_PID,
+        help=(
+            "PID to monitor for memory diagnostics. Default: current Python/binder process. "
+            "Can also be set with TEST_MEMORY_PID."
+        ),
+    )
+    p.add_argument(
+        "--fail-on-rss-growth-mib",
+        dest="fail_on_rss_growth_mib",
+        type=float,
+        default=(
+            FAIL_ON_RSS_GROWTH_BYTES / (1024 * 1024)
+            if FAIL_ON_RSS_GROWTH_BYTES is not None
+            else None
+        ),
+        help=(
+            "Fail the test when RSS growth after all loops exceeds this MiB threshold. "
+            "Default: TEST_FAIL_ON_RSS_GROWTH_MIB or disabled."
+        ),
+    )
+    p.add_argument(
+        "--gc-between-loops",
+        dest="gc_between_loops",
+        action="store_true",
+        default=GC_BETWEEN_LOOPS,
+        help="Run Python gc.collect() before each loop. Default: TEST_GC_BETWEEN_LOOPS.",
+    )
+    p.add_argument(
+        "--loop-delay-ms",
+        dest="loop_delay_ms",
+        type=int,
+        default=LOOP_DELAY_MS,
+        help="Sleep this many milliseconds between loops. Default: TEST_LOOP_DELAY_MS or 0.",
+    )
+    p.add_argument(
+        "--vary-seed-per-loop",
+        dest="vary_seed_per_loop",
+        action="store_true",
+        default=VARY_SEED_PER_LOOP,
+        help=(
+            "Use TEST_SEED + loop index instead of replaying the exact same random values "
+            "on every loop. Default: TEST_VARY_SEED_PER_LOOP."
+        ),
+    )
+    p.add_argument(
+        "--metrics-log",
+        dest="metrics_log",
+        type=Path,
+        default=METRICS_LOG_FILE,
+        help=(
+            "Write timing, memory and scenario counters to this file. "
+            "Default: TEST_METRICS_LOG_FILE or disabled."
+        ),
+    )
+    p.add_argument(
+        "--metrics-log-format",
+        dest="metrics_log_format",
+        choices=("csv", "jsonl"),
+        default=METRICS_LOG_FORMAT if METRICS_LOG_FORMAT in {"csv", "jsonl"} else "csv",
+        help="Metrics log format. Default: TEST_METRICS_LOG_FORMAT or csv.",
+    )
+    p.add_argument(
+        "--metrics-log-every",
+        dest="metrics_log_every",
+        type=int,
+        default=METRICS_LOG_EVERY,
+        help=(
+            "Write one metrics row every N loops when --metrics-log is enabled. "
+            "Use 0 to write only start and summary. "
+            "Default: TEST_METRICS_LOG_EVERY or 1."
+        ),
+    )
+    p.add_argument(
+        "--metrics-log-append",
+        dest="metrics_log_append",
+        action="store_true",
+        default=METRICS_LOG_APPEND,
+        help="Append to the metrics log instead of overwriting it. Default: TEST_METRICS_LOG_APPEND.",
+    )
+    p.add_argument(
+        "--no-metrics-log-flush",
+        dest="metrics_log_flush",
+        action="store_false",
+        default=METRICS_LOG_FLUSH,
+        help="Do not flush the metrics log after each row.",
+    )
 
     g = p.add_mutually_exclusive_group()
     g.add_argument("--quiet", action="store_true", help="Only show errors.")
@@ -1035,6 +1706,40 @@ if __name__ == "__main__":
     if args.vcan_iface is not None:
         VCAN_IFACE = str(args.vcan_iface)
         os.environ["VCAN_IFACE"] = VCAN_IFACE
+
+    if args.loops < 1:
+        p.error("--loops must be >= 1")
+    SCENARIO_LOOPS = args.loops
+
+    if args.memory_report_every < 0:
+        p.error("--memory-report-every must be >= 0")
+    MEMORY_REPORT_EVERY = args.memory_report_every
+
+    if args.memory_pid is not None and args.memory_pid < 1:
+        p.error("--memory-pid must be >= 1")
+    MEMORY_PID = args.memory_pid
+
+    if args.fail_on_rss_growth_mib is not None and args.fail_on_rss_growth_mib < 0:
+        p.error("--fail-on-rss-growth-mib must be >= 0")
+    FAIL_ON_RSS_GROWTH_BYTES = _mib_to_bytes(args.fail_on_rss_growth_mib)
+
+    if args.loop_delay_ms < 0:
+        p.error("--loop-delay-ms must be >= 0")
+    LOOP_DELAY_MS = args.loop_delay_ms
+
+    GC_BETWEEN_LOOPS = bool(args.gc_between_loops)
+    VARY_SEED_PER_LOOP = bool(args.vary_seed_per_loop)
+
+    METRICS_LOG_FILE = (
+        args.metrics_log.expanduser() if args.metrics_log is not None else None
+    )
+    METRICS_LOG_FORMAT = str(args.metrics_log_format).strip().lower()
+    METRICS_LOG_APPEND = bool(args.metrics_log_append)
+    METRICS_LOG_FLUSH = bool(args.metrics_log_flush)
+
+    if args.metrics_log_every < 0:
+        p.error("--metrics-log-every must be >= 0")
+    METRICS_LOG_EVERY = args.metrics_log_every
 
     if args.canids is not None:
         t = str(args.canids).strip().lower()
