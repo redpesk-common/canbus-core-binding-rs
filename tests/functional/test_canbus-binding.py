@@ -20,17 +20,22 @@ from __future__ import annotations
 
 import argparse
 import csv
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 import enum
 import gc
 import json
 import logging
 import os
+import queue
 import random
+import shutil
+import subprocess
+import threading
 from pathlib import Path
 import sys
 import time
+import unittest
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 import can
@@ -41,6 +46,8 @@ from afb_test import (
     EventAssertionError,
     configure_afb_binding_tests,
     run_afb_binding_tests,
+    serialize_test_case_result,
+    unserialize_in_result,
 )
 
 # -----------------------------------------------------------------------------
@@ -61,6 +68,14 @@ VCAN_IFACE = os.environ.get("VCAN_IFACE", "vcan0")
 
 bindings: Dict[str, str] = {}
 config: Dict[str, Dict[str, Any]] = {}
+
+# When enabled, the test harness creates only a lightweight Python binder and
+# imports APIs from an already running external binder instead of loading the
+# binding shared objects locally.
+EXTERNAL_BINDER_MODE = False
+EXTERNAL_API_IMPORTS: Dict[str, str] = {}
+EXTERNAL_BINDER_SOCKSPEC: Optional[str] = None
+EXTERNAL_CLIENT_BIN = os.environ.get("AFB_CLIENT_BIN", "afb-client")
 
 
 def _env_int(name: str, default: int, *, min_value: Optional[int] = None) -> int:
@@ -156,6 +171,90 @@ def _setup_logging(*, quiet: bool, verbose: bool, debug: bool) -> None:
 def _read_json(path: Path) -> Dict[str, Any]:
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def _parse_api_uri_mapping(value: str) -> Tuple[str, str]:
+    if "=" not in value:
+        raise ValueError(
+            f"Invalid API URI mapping. Expected '<api>=<uri>', got: {value!r}"
+        )
+    api, uri = value.split("=", 1)
+    api = api.strip()
+    uri = uri.strip()
+    if not api:
+        raise ValueError(f"Invalid API URI mapping without API name: {value!r}")
+    if not uri:
+        raise ValueError(f"Invalid API URI mapping without URI: {value!r}")
+    return api, uri
+
+
+def _join_external_api_uri(base_uri: str, api: str) -> str:
+    base = base_uri.rstrip("/")
+    if base.endswith("/api"):
+        return f"{base}/{api}"
+    return f"{base}/api/{api}"
+
+
+def _normalize_external_client_sockspec(uri: str) -> str:
+    """
+    Return the SOCKSPEC expected by afb-client for the binder HTTP endpoint.
+
+    afb-client without --direct talks to the binder WS/HTTP endpoint. For a
+    binder served at http://host:port, the SOCKSPEC is http://host:port/api.
+    A user-facing tcp:host:port value is accepted for convenience and converted
+    to http://host:port/api.
+    """
+    base = uri.rstrip("/")
+
+    if base.startswith("tcp:"):
+        base = "http://" + base[len("tcp:") :]
+
+    if base.startswith(("http://", "https://")):
+        if base.endswith("/api"):
+            return base
+        return f"{base}/api"
+
+    if base.endswith("/api"):
+        return base
+    return f"{base}/api"
+
+
+def _join_external_binder_sockspec(base_uri: str) -> str:
+    return _normalize_external_client_sockspec(base_uri)
+
+
+def _infer_external_binder_sockspec(
+    *,
+    base_uri: Optional[str],
+    imports: Dict[str, str],
+) -> Optional[str]:
+    if base_uri:
+        return _join_external_binder_sockspec(base_uri)
+
+    for api, uri in sorted(imports.items()):
+        suffix = f"/{api}"
+        if uri.rstrip("/").endswith(suffix):
+            return _normalize_external_client_sockspec(uri.rstrip("/")[: -len(suffix)])
+
+    return None
+
+
+def _build_external_api_imports(
+    *,
+    base_uri: Optional[str],
+    explicit_api_uris: Optional[List[str]],
+) -> Dict[str, str]:
+    imports: Dict[str, str] = {}
+
+    if base_uri:
+        for api in sorted(bindings.keys()):
+            imports[api] = _join_external_api_uri(base_uri, api)
+
+    for item in explicit_api_uris or []:
+        api, uri = _parse_api_uri_mapping(item)
+        imports[api] = uri
+
+    return imports
 
 
 def _expand_vars(s: str) -> str:
@@ -725,6 +824,82 @@ def _format_scenario_stats(stats: Dict[str, int]) -> str:
     return " ".join(f"{key}={value}" for key, value in sorted(stats.items()))
 
 
+@contextmanager
+def _assert_can_event_emitted(
+    binder: Any,
+    api: str,
+    event_name: str,
+    *,
+    timeout_ms: int,
+    value: Any,
+    value_lambda: Any,
+):
+    """
+    Wait for a decoded CAN event.
+
+    With locally loaded bindings the event prefix is stable and matches the API
+    name. With imported APIs, the event may be forwarded through the local
+    binder with a different API prefix depending on the import/export mode.
+    Register a wildcard handler in external-binder mode so the test still checks
+    the event label and payload without depending on that prefix.
+    """
+    import time as _time
+
+    exact_pattern = f"{api}/{event_name}"
+    patterns = [exact_pattern]
+    if EXTERNAL_BINDER_MODE:
+        patterns.append(f"*/{event_name}")
+
+    state: Dict[str, Any] = {"received": False, "data": [], "event": None}
+
+    def on_evt(*args: Any) -> None:
+        state["received"] = True
+        if len(args) > 1:
+            state["event"] = args[1]
+        data = state["data"]
+        data.clear()
+        if len(args) > 3:
+            data.extend(args[3:])
+
+    for pattern in patterns:
+        libafb.evthandler(
+            binder,
+            {"pattern": pattern, "callback": on_evt},
+            None,
+        )
+
+    try:
+        yield
+
+        start = _time.monotonic()
+        while (_time.monotonic() - start) * 1000.0 <= timeout_ms and not state[
+            "received"
+        ]:
+            _time.sleep(0.01)
+
+        if not state["received"]:
+            raise EventAssertionError(
+                f"No event received within {timeout_ms} ms for pattern '{exact_pattern}'."
+            )
+
+        list_data = state["data"]
+        if len(list_data) > 0:
+            got_value = (
+                value_lambda(list_data[0]) if value_lambda is not None else list_data[0]
+            )
+            if got_value != value:
+                raise EventAssertionError(
+                    f"Event received but payload value mismatch for pattern '{exact_pattern}'.\n"
+                    f"Received event: {state['event']!r}\n"
+                    f"Expected value: {value!r}\n"
+                    f"Got value:      {got_value!r}\n"
+                    f"Full payload:   {list_data!r}"
+                )
+    finally:
+        state["data"].clear()
+        state["event"] = None
+
+
 # -----------------------------------------------------------------------------
 # CAN-ish casing (ported / adapted from heck)
 # -----------------------------------------------------------------------------
@@ -1215,6 +1390,350 @@ def _send_frame(bus: can.Bus, can_id: int, data: bytes, is_extended: bool) -> No
 
 
 # -----------------------------------------------------------------------------
+# External binder client
+# -----------------------------------------------------------------------------
+
+
+class _ExternalAfbClientError(RuntimeError):
+    pass
+
+
+def _external_client_available() -> str:
+    client = shutil.which(EXTERNAL_CLIENT_BIN)
+    if client is None:
+        raise _ExternalAfbClientError(
+            f"Missing external client '{EXTERNAL_CLIENT_BIN}'. Install afb-client "
+            "or set AFB_CLIENT_BIN to a compatible client binary."
+        )
+    return client
+
+
+def _line_has_afb_error(line: str) -> bool:
+    stripped = line.strip()
+    lower = stripped.lower()
+
+    # afb-client prefixes replies with a human-readable status line such as:
+    #   ON-REPLY 1:model3/SomeSignalContainingError: OK
+    # Do not classify the line as an error only because the API/verb name
+    # contains the word "Error". Only the reply status matters here.
+    if lower.startswith("on-reply "):
+        return not lower.endswith(": ok")
+
+    for candidate in _iter_json_candidates(stripped):
+        for item in _walk_json_values(candidate):
+            if not isinstance(item, dict):
+                continue
+
+            request = item.get("request")
+            if isinstance(request, dict):
+                status = str(request.get("status", "")).strip().lower()
+                if status:
+                    return status not in {"success", "ok"}
+
+                code = request.get("code")
+                if isinstance(code, int):
+                    return code != 0
+
+            status = str(item.get("status", "")).strip().lower()
+            if status in {"error", "failed", "failure"}:
+                return True
+
+    return any(
+        token in lower
+        for token in (
+            "disconnected",
+            "server hung up",
+            "unknown-verb",
+            "permission-denied",
+            "invalid",
+        )
+    )
+
+
+def _iter_json_candidates(line: str) -> Iterable[Any]:
+    stripped = line.strip()
+    if not stripped:
+        return
+
+    starts = [idx for idx, char in enumerate(stripped) if char in "[{"]
+    if not starts and stripped:
+        starts = [0]
+
+    for idx in starts:
+        try:
+            yield json.loads(stripped[idx:])
+        except Exception:
+            continue
+
+
+def _walk_json_values(value: Any) -> Iterable[Any]:
+    yield value
+    if isinstance(value, dict):
+        for child in value.values():
+            yield from _walk_json_values(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _walk_json_values(child)
+
+
+def _extract_external_event_payload(
+    line: str, event_name: str
+) -> Optional[Dict[str, Any]]:
+    if event_name not in line:
+        return None
+
+    for candidate in _iter_json_candidates(line):
+        dicts = [
+            item for item in _walk_json_values(candidate) if isinstance(item, dict)
+        ]
+        for item in dicts:
+            if "value" in item:
+                return item
+        if dicts:
+            return dicts[-1]
+
+    return None
+
+
+class _ExternalAfbSubscription:
+    def __init__(
+        self,
+        *,
+        sockspec: str,
+        api: str,
+        verb: str,
+        request: Dict[str, Any],
+        timeout_ms: int,
+        expected_value: Any,
+        value_lambda: Any,
+    ) -> None:
+        self.sockspec = sockspec
+        self.api = api
+        self.verb = verb
+        self.request = request
+        self.timeout_ms = timeout_ms
+        self.expected_value = expected_value
+        self.value_lambda = value_lambda
+        self.event_name = f"{api}/{verb}"
+        self.process: Optional[subprocess.Popen[str]] = None
+        self.lines: "queue.Queue[str]" = queue.Queue()
+        self.reader: Optional[threading.Thread] = None
+
+    def __enter__(self) -> "_ExternalAfbSubscription":
+        client = _external_client_available()
+        cmd = [
+            client,
+            "-r",
+            "-s",
+            "-k",
+            self.sockspec,
+            self.api,
+            self.verb,
+            json.dumps(self.request, separators=(",", ":")),
+        ]
+
+        print(f"# [external-client] start cmd={cmd!r}", flush=True)
+        self.process = subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+
+        assert self.process.stdout is not None
+
+        def _read_stdout() -> None:
+            assert self.process is not None
+            stdout = self.process.stdout
+            assert stdout is not None
+            try:
+                for raw_line in stdout:
+                    line = raw_line.rstrip("\n")
+                    if line:
+                        self.lines.put(line)
+            finally:
+                if not stdout.closed:
+                    stdout.close()
+
+        self.reader = threading.Thread(target=_read_stdout, daemon=True)
+        self.reader.start()
+        try:
+            self._wait_subscribe_reply()
+        except Exception:
+            self.close()
+            raise
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        try:
+            if exc_type is None:
+                self.wait_event()
+        finally:
+            self.close()
+
+    def _wait_subscribe_reply(self) -> None:
+        deadline = time.monotonic() + 5.0
+        seen: List[str] = []
+
+        while time.monotonic() < deadline:
+            line = self._get_line(timeout=0.25)
+            if line is None:
+                self._check_process_alive(seen)
+                continue
+
+            seen.append(line)
+            print(f"# [external-client] line {line}", flush=True)
+            if _line_has_afb_error(line):
+                raise _ExternalAfbClientError(
+                    f"Subscribe failed for {self.api}/{self.verb}: {line}"
+                )
+
+            # afb-client emits one reply line for the initial subscribe call.
+            # Keep the process alive after that line to receive future events.
+            return
+
+        raise _ExternalAfbClientError(
+            "No subscribe reply received from external binder for "
+            f"{self.api}/{self.verb}. Seen lines: {seen!r}"
+        )
+
+    def wait_event(self) -> None:
+        deadline = time.monotonic() + (self.timeout_ms / 1000.0)
+        seen: List[str] = []
+
+        while time.monotonic() < deadline:
+            line = self._get_line(timeout=0.05)
+            if line is None:
+                self._check_process_alive(seen)
+                continue
+
+            seen.append(line)
+            print(f"# [external-client] line {line}", flush=True)
+
+            payload = _extract_external_event_payload(line, self.event_name)
+            if payload is None:
+                continue
+
+            got_value = (
+                self.value_lambda(payload) if self.value_lambda is not None else payload
+            )
+            if got_value != self.expected_value:
+                raise EventAssertionError(
+                    f"Event received but payload value mismatch for pattern "
+                    f"'{self.event_name}'.\n"
+                    f"Expected value: {self.expected_value!r}\n"
+                    f"Got value:      {got_value!r}\n"
+                    f"Full payload:   {payload!r}"
+                )
+            return
+
+        raise EventAssertionError(
+            f"No event received within {self.timeout_ms} ms for pattern "
+            f"'{self.event_name}'. Seen lines: {seen!r}"
+        )
+
+    def close(self) -> None:
+        process = self.process
+        if process is None:
+            return
+
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=2)
+
+        stdout = process.stdout
+        if stdout is not None and not stdout.closed:
+            stdout.close()
+
+        if self.reader is not None and self.reader.is_alive():
+            self.reader.join(timeout=1)
+
+        self.reader = None
+        self.process = None
+
+    def _get_line(self, *, timeout: float) -> Optional[str]:
+        try:
+            return self.lines.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+    def _check_process_alive(self, seen: List[str]) -> None:
+        if self.process is None:
+            return
+        rc = self.process.poll()
+        if rc is not None:
+            raise _ExternalAfbClientError(
+                f"afb-client exited unexpectedly with status {rc} while waiting "
+                f"for {self.api}/{self.verb}. Seen lines: {seen!r}"
+            )
+
+
+def _external_call(
+    api: str, verb: str, request: Optional[Dict[str, Any]] = None
+) -> str:
+    if EXTERNAL_BINDER_SOCKSPEC is None:
+        raise _ExternalAfbClientError("External binder sockspec is not configured")
+
+    client = _external_client_available()
+    cmd = [
+        client,
+        "-r",
+        "-s",
+        EXTERNAL_BINDER_SOCKSPEC,
+        api,
+        verb,
+        json.dumps(request or {}, separators=(",", ":")),
+    ]
+    completed = subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    output = completed.stdout.strip()
+    print(
+        f"# [external-client] call cmd={cmd!r} rc={completed.returncode} output={output!r}"
+    )
+    if completed.returncode != 0 or _line_has_afb_error(output):
+        raise _ExternalAfbClientError(
+            f"External call failed for {api}/{verb}: rc={completed.returncode} output={output!r}"
+        )
+    return output
+
+
+@contextmanager
+def _external_event_subscription(
+    api: str,
+    verb: str,
+    *,
+    timeout_ms: int,
+    value: Any,
+    value_lambda: Any,
+):
+    if EXTERNAL_BINDER_SOCKSPEC is None:
+        raise _ExternalAfbClientError("External binder sockspec is not configured")
+
+    request = {"action": "subscribe", "flag": "all", "rate": 0, "watchdog": 0}
+    with _ExternalAfbSubscription(
+        sockspec=EXTERNAL_BINDER_SOCKSPEC,
+        api=api,
+        verb=verb,
+        request=request,
+        timeout_ms=timeout_ms,
+        expected_value=value,
+        value_lambda=value_lambda,
+    ):
+        yield
+
+
+# -----------------------------------------------------------------------------
 # AFB verbs
 # -----------------------------------------------------------------------------
 
@@ -1229,15 +1748,35 @@ def _verb_for(msg_name: str, sig_name: str) -> str:
 
 def _subscribe_signal(binder: Any, msg_name: str, sig_name: str) -> str:
     verb = _verb_for(msg_name, sig_name)
+    request = {"action": "subscribe", "flag": "all", "rate": 0, "watchdog": 0}
+
     try:
-        libafb.callsync(
-            binder,
-            CAN_API,
-            verb,
-            {"action": "subscribe", "flag": "all", "rate": 0, "watchdog": 0},
-        )
+        if EXTERNAL_BINDER_MODE:
+            print(
+                f"# [external-subscribe] call api={CAN_API} "
+                f"verb={verb} request={request!r}",
+                flush=True,
+            )
+
+        reply = libafb.callsync(binder, CAN_API, verb, request)
+
+        if EXTERNAL_BINDER_MODE:
+            print(
+                "# [external-subscribe] reply "
+                f"api={CAN_API} verb={verb} "
+                f"reply={reply!r} "
+                f"status={getattr(reply, 'status', None)!r} "
+                f"args={getattr(reply, 'args', None)!r}",
+                flush=True,
+            )
+
         return verb
     except Exception as e:
+        if EXTERNAL_BINDER_MODE:
+            print(
+                f"# [external-subscribe] error api={CAN_API} verb={verb} error={e!r}",
+                flush=True,
+            )
         if _is_unknown_verb_error(e):
             raise RuntimeError(
                 f"_subscribe_signal: unknown-verb:{verb} for msg={msg_name}, sig={sig_name}"
@@ -1268,6 +1807,16 @@ def setUpModule() -> None:
     global bindings, config
     print(f"Using bindings : {bindings}")
     print(f"Using config : {config}")
+    if EXTERNAL_BINDER_MODE:
+        print(f"Using external API imports : {EXTERNAL_API_IMPORTS}")
+        print(f"Using external binder sockspec : {EXTERNAL_BINDER_SOCKSPEC}")
+        if not EXTERNAL_API_IMPORTS:
+            raise RuntimeError(
+                "External binder mode requested but no API import URI was configured."
+            )
+        configure_afb_binding_tests(bindings={}, config={})
+        return
+
     if not bindings or not config:
         raise RuntimeError(
             "Binder configuration not initialized. "
@@ -1278,7 +1827,21 @@ def setUpModule() -> None:
 
 
 class TestBindingDbcGenerated(AFBTestCase):
+    def run(self, result: Optional[unittest.TestResult] = None) -> None:
+        if not EXTERNAL_BINDER_MODE:
+            return super().run(result)
+
+        # External mode intentionally does not create a local libafb binder.
+        # The test uses a real external client socket for calls/subscriptions,
+        # which matches the devtools behavior and keeps events tied to the same
+        # client session that issued the subscribe request.
+        return unittest.TestCase.run(self, result)
+
     def test_check_ok(self) -> None:
+        if EXTERNAL_BINDER_MODE:
+            _external_call("sockbcm", "check")
+            return
+
         try:
             r = libafb.callsync(self.binder, "sockbcm", "check")
         except Exception as e:
@@ -1344,33 +1907,52 @@ class TestBindingDbcGenerated(AFBTestCase):
                     f"sig={sig_name} expected={expected_norm}"
                 )
 
-                try:
-                    verb = _subscribe_signal(self.binder, msg_name, sig_name)
-                except Exception as e:
-                    if _is_unknown_verb_error(e):
-                        stats["unknown_verbs"] += 1
-                        stats["skipped"] += 1
-                        cc_msg = to_upper_camel_case(msg_name)
-                        cc_sig = to_upper_camel_case(sig_name)
-                        LOG.debug(
-                            f"[AFB] Skip unknown verb for canid={canid} "
-                            f"msg={msg_name}({cc_msg}) sig={sig_name}({cc_sig})"
-                        )
-                        continue
-                    LOG.error("[AFB] Subscribe failed: %s", case_label)
-                    raise
+                verb = _verb_for(msg_name, sig_name)
 
-                stats["subscribed"] += 1
+                subscribed = False
                 try:
-                    with self.assertEventEmitted(
-                        CAN_API,
-                        verb,
-                        timeout_ms=5000,
-                        value=expected_norm,
-                        value_lambda=lambda payload: _normalize_scalar(
-                            _extract_event_value(payload)
-                        ),
-                    ):
+                    event_ctx = (
+                        _external_event_subscription(
+                            CAN_API,
+                            verb,
+                            timeout_ms=5000,
+                            value=expected_norm,
+                            value_lambda=lambda payload: _normalize_scalar(
+                                _extract_event_value(payload)
+                            ),
+                        )
+                        if EXTERNAL_BINDER_MODE
+                        else self.assertEventEmitted(
+                            CAN_API,
+                            verb,
+                            timeout_ms=5000,
+                            value=expected_norm,
+                            value_lambda=lambda payload: _normalize_scalar(
+                                _extract_event_value(payload)
+                            ),
+                        )
+                    )
+
+                    with event_ctx:
+                        if not EXTERNAL_BINDER_MODE:
+                            try:
+                                _subscribe_signal(self.binder, msg_name, sig_name)
+                            except Exception as e:
+                                if _is_unknown_verb_error(e):
+                                    stats["unknown_verbs"] += 1
+                                    stats["skipped"] += 1
+                                    cc_msg = to_upper_camel_case(msg_name)
+                                    cc_sig = to_upper_camel_case(sig_name)
+                                    LOG.debug(
+                                        f"[AFB] Skip unknown verb for canid={canid} "
+                                        f"msg={msg_name}({cc_msg}) sig={sig_name}({cc_sig})"
+                                    )
+                                    continue
+                                LOG.error("[AFB] Subscribe failed: %s", case_label)
+                                raise
+
+                        subscribed = True
+                        stats["subscribed"] += 1
                         _send_frame(bus, canid, data, is_extended)
                     stats["events"] += 1
                 except EventAssertionError as e:
@@ -1379,7 +1961,8 @@ class TestBindingDbcGenerated(AFBTestCase):
                     LOG.error(f"[AFB] Encoded bytes: {data.hex()}")
                     raise EventAssertionError(f"{case_label}: {e}") from e
                 finally:
-                    _unsubscribe_signal(self.binder, msg_name, sig_name)
+                    if subscribed and not EXTERNAL_BINDER_MODE:
+                        _unsubscribe_signal(self.binder, msg_name, sig_name)
 
         return stats
 
@@ -1555,6 +2138,39 @@ if __name__ == "__main__":
         dest="vcan_iface",
         default="vcan0",
         help="Override SocketCAN interface (e.g. vcan0).",
+    )
+    p.add_argument(
+        "--external-binder-uri",
+        dest="external_binder_uri",
+        default=None,
+        help=(
+            "Import tested APIs from an already running binder instead of loading "
+            "local binding .so files. The API name is appended below the AFB "
+            "root API path for imported API URIs. For example "
+            "tcp:localhost:1234 becomes tcp:localhost:1234/api/model3. "
+            "The external afb-client backend converts this to "
+            "http://localhost:1234/api when calling afb-client."
+        ),
+    )
+    p.add_argument(
+        "--external-api-uri",
+        dest="external_api_uris",
+        action="append",
+        default=[],
+        metavar="API=URI",
+        help=(
+            "Import one API from an already running binder. Can be repeated. "
+            "Example: --external-api-uri model3=tcp:localhost:1234/api/model3."
+        ),
+    )
+    p.add_argument(
+        "--external-client-bin",
+        dest="external_client_bin",
+        default=EXTERNAL_CLIENT_BIN,
+        help=(
+            "Client binary used by --external-binder-uri mode. "
+            "Default: AFB_CLIENT_BIN or afb-client."
+        ),
     )
     p.add_argument(
         "--canids",
@@ -1752,6 +2368,28 @@ if __name__ == "__main__":
 
         # Recompute the effective filter because it depends on _canids.
         ALLOWED_CANIDS = _parse_canids_env()
+
+    EXTERNAL_CLIENT_BIN = str(args.external_client_bin)
+
+    EXTERNAL_API_IMPORTS = _build_external_api_imports(
+        base_uri=args.external_binder_uri,
+        explicit_api_uris=args.external_api_uris,
+    )
+    EXTERNAL_BINDER_SOCKSPEC = _infer_external_binder_sockspec(
+        base_uri=args.external_binder_uri,
+        imports=EXTERNAL_API_IMPORTS,
+    )
+    EXTERNAL_BINDER_MODE = bool(EXTERNAL_API_IMPORTS)
+
+    if EXTERNAL_BINDER_MODE:
+        missing_apis = [
+            api for api in bindings.keys() if api not in EXTERNAL_API_IMPORTS
+        ]
+        if missing_apis:
+            p.error(
+                "External binder mode requires an import URI for every configured API. "
+                f"Missing: {', '.join(sorted(missing_apis))}"
+            )
 
     # unittest parses sys.argv internally; remove our custom CLI args
     # so it doesn't choke on --config/--verbose/--debug/--quiet.
