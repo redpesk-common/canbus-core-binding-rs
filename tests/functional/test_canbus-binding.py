@@ -168,6 +168,15 @@ def _setup_logging(*, quiet: bool, verbose: bool, debug: bool) -> None:
     )
 
 
+def _verbose_output_enabled() -> bool:
+    return LOG.isEnabledFor(logging.INFO)
+
+
+def _verbose_print(*args: Any, **kwargs: Any) -> None:
+    if _verbose_output_enabled():
+        print(*args, **kwargs)
+
+
 def _read_json(path: Path) -> Dict[str, Any]:
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
@@ -1408,46 +1417,70 @@ def _external_client_available() -> str:
     return client
 
 
-def _line_has_afb_error(line: str) -> bool:
-    stripped = line.strip()
-    lower = stripped.lower()
+def _line_has_afb_error(output: str) -> bool:
+    """
+    Return True only for real afb-client errors.
 
-    # afb-client prefixes replies with a human-readable status line such as:
-    #   ON-REPLY 1:model3/SomeSignalContainingError: OK
-    # Do not classify the line as an error only because the API/verb name
-    # contains the word "Error". Only the reply status matters here.
-    if lower.startswith("on-reply "):
-        return not lower.endswith(": ok")
+    afb-client may return multi-line output, for example:
 
-    for candidate in _iter_json_candidates(stripped):
-        for item in _walk_json_values(candidate):
-            if not isinstance(item, dict):
-                continue
+      ON-REPLY 1:sockbcm/check: OK
+      {"jtype":"afb-reply","request":{"status":"success","code":0}}
 
-            request = item.get("request")
-            if isinstance(request, dict):
-                status = str(request.get("status", "")).strip().lower()
-                if status:
-                    return status not in {"success", "ok"}
+    Evaluate each line independently so a successful ON-REPLY line followed by a
+    JSON reply is not misclassified as an error.
+    """
+    for raw_line in output.splitlines() or [output]:
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
 
-                code = request.get("code")
-                if isinstance(code, int):
-                    return code != 0
+        lower = stripped.lower()
 
-            status = str(item.get("status", "")).strip().lower()
-            if status in {"error", "failed", "failure"}:
+        # afb-client prefixes replies with a human-readable status line such as:
+        #   ON-REPLY 1:model3/SomeSignalContainingError: OK
+        # Do not classify the line as an error only because the API/verb name
+        # contains the word "Error". Only the reply status matters here.
+        if lower.startswith("on-reply "):
+            if not lower.endswith(": ok"):
                 return True
+            continue
 
-    return any(
-        token in lower
-        for token in (
-            "disconnected",
-            "server hung up",
-            "unknown-verb",
-            "permission-denied",
-            "invalid",
-        )
-    )
+        for candidate in _iter_json_candidates(stripped):
+            for item in _walk_json_values(candidate):
+                if not isinstance(item, dict):
+                    continue
+
+                request = item.get("request")
+                if isinstance(request, dict):
+                    status = str(request.get("status", "")).strip().lower()
+                    if status:
+                        if status not in {"success", "ok"}:
+                            return True
+                        continue
+
+                    code = request.get("code")
+                    if isinstance(code, int):
+                        if code != 0:
+                            return True
+                        continue
+
+                status = str(item.get("status", "")).strip().lower()
+                if status in {"error", "failed", "failure"}:
+                    return True
+
+        if any(
+            token in lower
+            for token in (
+                "disconnected",
+                "server hung up",
+                "unknown-verb",
+                "permission-denied",
+                "invalid",
+            )
+        ):
+            return True
+
+    return False
 
 
 def _iter_json_candidates(line: str) -> Iterable[Any]:
@@ -1532,7 +1565,7 @@ class _ExternalAfbSubscription:
             json.dumps(self.request, separators=(",", ":")),
         ]
 
-        print(f"# [external-client] start cmd={cmd!r}", flush=True)
+        LOG.info("[external-client] start cmd=%r", cmd)
         self.process = subprocess.Popen(
             cmd,
             stdin=subprocess.DEVNULL,
@@ -1584,7 +1617,7 @@ class _ExternalAfbSubscription:
                 continue
 
             seen.append(line)
-            print(f"# [external-client] line {line}", flush=True)
+            LOG.info("[external-client] line %s", line)
             if _line_has_afb_error(line):
                 raise _ExternalAfbClientError(
                     f"Subscribe failed for {self.api}/{self.verb}: {line}"
@@ -1610,7 +1643,7 @@ class _ExternalAfbSubscription:
                 continue
 
             seen.append(line)
-            print(f"# [external-client] line {line}", flush=True)
+            LOG.info("[external-client] line %s", line)
 
             payload = _extract_external_event_payload(line, self.event_name)
             if payload is None:
@@ -1698,8 +1731,11 @@ def _external_call(
         check=False,
     )
     output = completed.stdout.strip()
-    print(
-        f"# [external-client] call cmd={cmd!r} rc={completed.returncode} output={output!r}"
+    LOG.info(
+        "[external-client] call cmd=%r rc=%s output=%r",
+        cmd,
+        completed.returncode,
+        output,
     )
     if completed.returncode != 0 or _line_has_afb_error(output):
         raise _ExternalAfbClientError(
@@ -1752,30 +1788,33 @@ def _subscribe_signal(binder: Any, msg_name: str, sig_name: str) -> str:
 
     try:
         if EXTERNAL_BINDER_MODE:
-            print(
-                f"# [external-subscribe] call api={CAN_API} "
-                f"verb={verb} request={request!r}",
-                flush=True,
+            LOG.info(
+                "[external-subscribe] call api=%s verb=%s request=%r",
+                CAN_API,
+                verb,
+                request,
             )
 
         reply = libafb.callsync(binder, CAN_API, verb, request)
 
         if EXTERNAL_BINDER_MODE:
-            print(
-                "# [external-subscribe] reply "
-                f"api={CAN_API} verb={verb} "
-                f"reply={reply!r} "
-                f"status={getattr(reply, 'status', None)!r} "
-                f"args={getattr(reply, 'args', None)!r}",
-                flush=True,
+            LOG.info(
+                "[external-subscribe] reply api=%s verb=%s reply=%r status=%r args=%r",
+                CAN_API,
+                verb,
+                reply,
+                getattr(reply, "status", None),
+                getattr(reply, "args", None),
             )
 
         return verb
     except Exception as e:
         if EXTERNAL_BINDER_MODE:
-            print(
-                f"# [external-subscribe] error api={CAN_API} verb={verb} error={e!r}",
-                flush=True,
+            LOG.info(
+                "[external-subscribe] error api=%s verb=%s error=%r",
+                CAN_API,
+                verb,
+                e,
             )
         if _is_unknown_verb_error(e):
             raise RuntimeError(
@@ -1805,11 +1844,11 @@ def _unsubscribe_signal(binder: Any, msg_name: str, sig_name: str) -> str:
 
 def setUpModule() -> None:
     global bindings, config
-    print(f"Using bindings : {bindings}")
-    print(f"Using config : {config}")
+    LOG.info("Using bindings: %s", bindings)
+    LOG.info("Using config: %s", config)
     if EXTERNAL_BINDER_MODE:
-        print(f"Using external API imports : {EXTERNAL_API_IMPORTS}")
-        print(f"Using external binder sockspec : {EXTERNAL_BINDER_SOCKSPEC}")
+        LOG.info("Using external API imports: %s", EXTERNAL_API_IMPORTS)
+        LOG.info("Using external binder sockspec: %s", EXTERNAL_BINDER_SOCKSPEC)
         if not EXTERNAL_API_IMPORTS:
             raise RuntimeError(
                 "External binder mode requested but no API import URI was configured."
@@ -2306,7 +2345,7 @@ if __name__ == "__main__":
     cfg_path = args.config.expanduser()
     if not cfg_path.exists():
         p.error(f"--config file not found: {cfg_path}")
-    print(f"Using binder config: {cfg_path}")
+    LOG.info("Using binder config: %s", cfg_path)
     _init_from_binder_config(cfg_path)
 
     # CLI overrides (highest priority).
