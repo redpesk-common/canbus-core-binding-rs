@@ -47,10 +47,11 @@ if [ ! -f "${RUN_SH}" ]; then
 fi
 
 echo "Running tests with ${RUN_SH}"
-${RUN_SH} \
+"${RUN_SH}" \
     --setup_vcan \
     --cleanup_vcan \
-    --log_dir ${LOG_DIR}
+    --log_dir "${LOG_DIR}" \
+    "$@"
 
 ##########################
 # report status
