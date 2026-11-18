@@ -1,136 +1,145 @@
 #!/bin/bash
-
-# when this script will be run, the packages your-application.rpm and your-application-redtest.rpm
-# would have been installed on the target
+set -euo pipefail
 
 PACKAGE_NAME="canbus-core-binding-rs"
+COVERAGE=no
 MAIN_SO_PATH="/usr/redpesk/canbus-core-binding-rs/lib"
 EXAMPLES_SO_PATH="/usr/libexec/redtest/canbus-core-binding-rs/lib"
 
 export LD_LIBRARY_PATH="${MAIN_SO_PATH}:${EXAMPLES_SO_PATH}:${LD_LIBRARY_PATH:-}"
 
-# Run your tests (generate .tap file for redpesk)
-echo "--- Start test python hello world binding ---"
-SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+echo "--- Start canbus-core-binding-rs RedTest ---"
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 ROOT_DIR=$(dirname "${SCRIPT_DIR}")
-# Create the directory where the logs need to be
+
 LOG_DIR="${LOG_DIR:-/var/log/redtest/${PACKAGE_NAME}}"
 if ! mkdir -p "${LOG_DIR}" 2>/dev/null || [[ ! -w "${LOG_DIR}" ]]; then
-  LOG_DIR="$(pwd)/logs/"
+  LOG_DIR="$(pwd)/logs"
   mkdir -p "${LOG_DIR}"
 fi
 export LOG_DIR
 
 COVERAGE_DIR="${COVERAGE_DIR:-${LOG_DIR}/coverage}"
 
-rm -fr "${COVERAGE_DIR}"
-if ! mkdir -p "${COVERAGE_DIR}" 2>/dev/null; then
-  echo "WARNING: failed to cleanup coverage directory ${COVERAGE_DIR}, using local directory instead"
-  COVERAGE_DIR="$SCRIPT_DIR/../coverage"
+if [[ "${COVERAGE}" == "yes" ]]; then
+  rm -rf "${COVERAGE_DIR}"
   mkdir -p "${COVERAGE_DIR}"
+
+  export LLVM_PROFILE_FILE="${COVERAGE_DIR}/%p-%m.profraw"
+  export LLVM_PROFDATA=/usr/bin/llvm-profdata
+  export LLVM_COV=/usr/bin/llvm-cov
 fi
-export COVERAGE_DIR
-
-export LLVM_PROFILE_FILE="${COVERAGE_DIR}/%p-%m.profraw"
-export LLVM_PROFDATA=/usr/bin/llvm-profdata
-export LLVM_COV=/usr/bin/llvm-cov
-
 
 RUN_SH="${SCRIPT_DIR}/run.sh"
-if [ ! -f "${RUN_SH}" ]; then
-  echo "${RUN_SH}: notfound, using local directory instead"
+if [[ ! -f "${RUN_SH}" ]]; then
+  echo "${RUN_SH}: not found, using local directory instead"
   RUN_SH="${SCRIPT_DIR}/../tests/run.sh"
-  if [ ! -f "${RUN_SH}" ]; then
-    echo "${RUN_SH}: notfound"
+  if [[ ! -f "${RUN_SH}" ]]; then
+    echo "${RUN_SH}: not found"
     exit 1
   fi
 fi
 
 echo "Running tests with ${RUN_SH}"
 "${RUN_SH}" \
-    --setup_vcan \
-    --cleanup_vcan \
-    --log_dir "${LOG_DIR}" \
-    "$@"
+  --setup_vcan \
+  --cleanup_vcan \
+  --log_dir "${LOG_DIR}" \
+  "$@"
 
 ##########################
-# report status
+# Coverage report section
 ##########################
 
-echo "--- Generate coverage report ---"
-echo "Merging .profraw files from ${COVERAGE_DIR} into ${COVERAGE_DIR}/merged.profdata"
-"$LLVM_PROFDATA" merge -sparse ${COVERAGE_DIR}/*.profraw \
-  -o "${COVERAGE_DIR}/merged.profdata"
+if [[ "${COVERAGE}" == "yes" ]]; then
+  echo "--- Generate LLVM coverage report ---"
 
+  shopt -s nullglob
+  PROFRAW_FILES=("${COVERAGE_DIR}"/*.profraw)
+  shopt -u nullglob
 
-if [ ! -f "${MAIN_SO_PATH}/libafb_sockcan.so" ]; then
-  echo "${MAIN_SO_PATH}/libafb_sockcan.so: notfound, using local release directory instead"
-  MAIN_SO_PATH="${ROOT_DIR}/target/release"
-  if [ ! -f "${MAIN_SO_PATH}/libafb_sockcan.so" ]; then
-    echo "${MAIN_SO_PATH}/libafb_sockcan.so: notfound, using local debug directory instead"
-    MAIN_SO_PATH="${ROOT_DIR}/target/debug"
-    if [ ! -f "${MAIN_SO_PATH}/libafb_sockcan.so" ]; then
-      echo "${MAIN_SO_PATH}/libafb_sockcan.so: notfound, coverage impossible"
-      exit 1
+  if [[ ${#PROFRAW_FILES[@]} -eq 0 ]]; then
+    echo "ERROR: no LLVM profile data generated in ${COVERAGE_DIR}" >&2
+    exit 1
+  fi
+
+  echo "Merging .profraw files into ${COVERAGE_DIR}/merged.profdata"
+  "${LLVM_PROFDATA}" merge -sparse "${PROFRAW_FILES[@]}" \
+    -o "${COVERAGE_DIR}/merged.profdata"
+
+  if [[ ! -f "${MAIN_SO_PATH}/libafb_sockcan.so" ]]; then
+    echo "${MAIN_SO_PATH}/libafb_sockcan.so: not found, using local release directory instead"
+    MAIN_SO_PATH="${ROOT_DIR}/target/release"
+    if [[ ! -f "${MAIN_SO_PATH}/libafb_sockcan.so" ]]; then
+      echo "${MAIN_SO_PATH}/libafb_sockcan.so: not found, using local debug directory instead"
+      MAIN_SO_PATH="${ROOT_DIR}/target/debug"
+      if [[ ! -f "${MAIN_SO_PATH}/libafb_sockcan.so" ]]; then
+        echo "${MAIN_SO_PATH}/libafb_sockcan.so: not found, coverage impossible"
+        exit 1
+      fi
     fi
   fi
-fi
 
-if [ ! -f "${EXAMPLES_SO_PATH}/libafb_model3.so" ]; then
-  echo "${EXAMPLES_SO_PATH}/libafb_model3.so: notfound, using local release directory instead"
-  EXAMPLES_SO_PATH="${ROOT_DIR}/target/release"
-  if [ ! -f "${EXAMPLES_SO_PATH}/libafb_model3.so" ]; then
-    echo "${EXAMPLES_SO_PATH}/libafb_model3.so: notfound, using local debug directory instead"
-    EXAMPLES_SO_PATH="${ROOT_DIR}/target/debug"
-    if [ ! -f "${EXAMPLES_SO_PATH}/libafb_model3.so" ]; then
-      echo "${EXAMPLES_SO_PATH}/libafb_model3.so: notfound, coverage impossible"
-      exit 1
+  if [[ ! -f "${EXAMPLES_SO_PATH}/libafb_model3.so" ]]; then
+    echo "${EXAMPLES_SO_PATH}/libafb_model3.so: not found, using local release directory instead"
+    EXAMPLES_SO_PATH="${ROOT_DIR}/target/release"
+    if [[ ! -f "${EXAMPLES_SO_PATH}/libafb_model3.so" ]]; then
+      echo "${EXAMPLES_SO_PATH}/libafb_model3.so: not found, using local debug directory instead"
+      EXAMPLES_SO_PATH="${ROOT_DIR}/target/debug"
+      if [[ ! -f "${EXAMPLES_SO_PATH}/libafb_model3.so" ]]; then
+        echo "${EXAMPLES_SO_PATH}/libafb_model3.so: not found, coverage impossible"
+        exit 1
+      fi
     fi
   fi
-fi
 
-echo "Generating lcov report from merged.profdata"
+  LLVM_COV_OBJECTS=(
+    "${MAIN_SO_PATH}/libafb_sockcan.so"
+    -object "${EXAMPLES_SO_PATH}/libafb_model3.so"
+    -object "${EXAMPLES_SO_PATH}/libafb_can_multiplexing.so"
+    -object "${EXAMPLES_SO_PATH}/libafb_bms.so"
+  )
+  LLVM_COV_IGNORE='(/\.cargo/registry/|/canbus-core-rs/|/afb-librust/|/target/)'
 
-LCOV_OUTPUT="${COVERAGE_DIR}/lcov.info"
-"$LLVM_COV" export \
-  --format=lcov \
-  --instr-profile="${COVERAGE_DIR}/merged.profdata" \
-  "${MAIN_SO_PATH}/libafb_sockcan.so" \
-  -object "${EXAMPLES_SO_PATH}/libafb_model3.so" \
-  -object "${EXAMPLES_SO_PATH}/libafb_can_multiplexing.so" \
-  -object "${EXAMPLES_SO_PATH}/libafb_bms.so" \
-  --ignore-filename-regex='(/\.cargo/registry/|/canbus-core-rs/|/afb-librust/|/target/)' \
-  > "${LCOV_OUTPUT}"
+  # Rust coverage is generated by LLVM instrumentation. gcov cannot consume
+  # Rust .profraw/.profdata, so keep llvm-cov and avoid the lcov executable.
+  LCOV_OUTPUT="${COVERAGE_DIR}/lcov.info"
+  "${LLVM_COV}" export \
+    --format=lcov \
+    --instr-profile="${COVERAGE_DIR}/merged.profdata" \
+    "${LLVM_COV_OBJECTS[@]}" \
+    --ignore-filename-regex="${LLVM_COV_IGNORE}" \
+    > "${LCOV_OUTPUT}"
 
-echo "Generating html report from merged.profdata"
+  "${LLVM_COV}" show \
+    --format=html \
+    --instr-profile="${COVERAGE_DIR}/merged.profdata" \
+    "${LLVM_COV_OBJECTS[@]}" \
+    --output-dir "${COVERAGE_DIR}/html" \
+    --ignore-filename-regex="${LLVM_COV_IGNORE}"
 
-"$LLVM_COV" show \
-  --format=html \
-  --instr-profile="${COVERAGE_DIR}/merged.profdata" \
-  "${MAIN_SO_PATH}/libafb_sockcan.so" \
-  -object "${EXAMPLES_SO_PATH}/libafb_model3.so" \
-  -object "${EXAMPLES_SO_PATH}/libafb_can_multiplexing.so" \
-  -object "${EXAMPLES_SO_PATH}/libafb_bms.so" \
-  --output-dir "${COVERAGE_DIR}/html" \
-  --ignore-filename-regex='(/\.cargo/registry/|/canbus-core-rs/|/afb-librust/|/target/)'
-
-
-if python3 -m lcov_cobertura --help >/dev/null 2>&1; then
-  echo "lcov_cobertura installed successfully."
-else
-  # Ensure pip is available for python3; install it if missing.
-  if python3 -m pip --version >/dev/null 2>&1; then
-    echo "pip is already available: $(python3 -m pip --version)"
-  else
-    echo "pip missing for python3. Attempting to install..."
+  if ! command -v lcov_cobertura >/dev/null 2>&1; then
+    if ! python3 -m lcov_cobertura --help >/dev/null 2>&1; then
+      python3 -m pip install lcov_cobertura
+    fi
   fi
-  python3 -m pip install  lcov_cobertura
+
+  COBERTURA_OUTPUT="${LOG_DIR}/coverage.xml"
+  lcov_cobertura "${LCOV_OUTPUT}" --output "${COBERTURA_OUTPUT}"
+  echo "--- Coverage report generated at ${LOG_DIR}/ ---"
 fi
-COBERTURA_OUTPUT="${LOG_DIR}/coverage.xml"
 
-lcov_cobertura "${LCOV_OUTPUT}" \
-  --output "${COBERTURA_OUTPUT}"
+##########################
+# Report status
+##########################
 
-echo "Check if any tests failed (looking for 'not ok' in .tap files)"
-grep -viq '^not ok' ${LOG_DIR}/*.tap
+shopt -s nullglob
+TAP_FILES=("${LOG_DIR}"/*.tap)
+shopt -u nullglob
 
+if [[ ${#TAP_FILES[@]} -eq 0 ]]; then
+  echo "ERROR: no TAP result found in ${LOG_DIR}" >&2
+  exit 1
+fi
+
+grep -viq '^not ok' "${TAP_FILES[@]}"

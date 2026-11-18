@@ -15,11 +15,13 @@ default:
     - redpesk-binding-ci
 
 build_factory:
+  image: registry.redpesk.bzh/factory-test/rp-cli:latest
   stage: build_factory
   extends:
     - .rp-cli-build
 
 redtest_factory:
+  image: registry.redpesk.bzh/factory-test/rp-cli:latest
   stage: redtest_factory
   needs:
     - build_factory
